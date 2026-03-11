@@ -700,36 +700,60 @@ class AssistantGUI(tk.Tk):
                 response = llm_result.get("response", "Done.")
                 os_cmd   = llm_result.get("os_command", None)
 
-                # Save dynamic command if it's a completely new zero-shot intent
+                def _continue_execution():
+                    # Save dynamic command if it's a completely new zero-shot intent
+                    if os_cmd and intent not in INTENT_HANDLERS:
+                        save_dynamic_command(intent, os_cmd)
+
+                    # Slot tags for display
+                    slot_tags = {k: v for k, v in params.items() if k != "path"}
+
+                    # Continuously learn from this command
+                    if add_to_dataset(text, intent):
+                        self._phrase_cnt += 1
+                        self._post("system", f"Learning new phrase: '{text[:30]}...' ({self._phrase_cnt}/5)")
+                        
+                        if self._phrase_cnt >= 5:
+                            self._phrase_cnt = 0
+                            self._post("system", "Batch retraining ML model in background...")
+                            def _background_train():
+                                try:
+                                    new_model = train()
+                                    self._model = new_model
+                                    self._post("system", "ML model updated with new vocabulary.")
+                                except Exception as e:
+                                    print(f"[GUI] Background train failed: {e}")
+                            threading.Thread(target=_background_train, daemon=True).start()
+
+                    # Still execute the actual OS command
+                    actual_response = execute(intent, params=params)
+                    # Prefer the LLM's friendly response, but use executor
+                    # response for dynamic intents (time, battery, etc.)
+                    if intent in ("get_time", "get_date", "get_battery",
+                                  "get_ip_address"):
+                        resp = actual_response
+                    else:
+                        resp = response
+
+                    self._post("assistant", resp, intent, 0,
+                               slot_tags=slot_tags or None, engine="LLM")
+                    speak_async(resp)
+
                 if os_cmd and intent not in INTENT_HANDLERS:
-                    save_dynamic_command(intent, os_cmd)
-
-                # Slot tags for display
-                slot_tags = {k: v for k, v in params.items() if k != "path"}
-
-                # Continuously learn from this command
-                if add_to_dataset(text, intent):
-                    self._post("system", f"Learning new phrase: '{text[:30]}...'")
-                    def _background_train():
-                        try:
-                            new_model = train()
-                            self._model = new_model
-                            self._post("system", "ML model updated with new vocabulary.")
-                        except Exception as e:
-                            print(f"[GUI] Background train failed: {e}")
-                    threading.Thread(target=_background_train, daemon=True).start()
-
-                # Still execute the actual OS command
-                actual_response = execute(intent, params=params)
-                # Prefer the LLM's friendly response, but use executor
-                # response for dynamic intents (time, battery, etc.)
-                if intent in ("get_time", "get_date", "get_battery",
-                              "get_ip_address"):
-                    response = actual_response
-
-                self._post("assistant", response, intent, 0,
-                           slot_tags=slot_tags or None, engine="LLM")
-                speak_async(response)
+                    # Security: Human-in-the-Loop for zero-shot commands
+                    self._post("system", f"Zero-shot LLM command generated for '{intent}'. Pending approval...")
+                    def _ask():
+                        import tkinter.messagebox as mb
+                        msg = f"Sypher needs to run a new system command:\n\n{os_cmd}\n\nDo you want to allow this?"
+                        if mb.askyesno("Security Guard", msg, parent=self):
+                            self._post("system", f"Execution allowed by user.")
+                            threading.Thread(target=_continue_execution, daemon=True).start()
+                        else:
+                            self._post("error", f"Command denied: {os_cmd}")
+                    self.after(0, _ask)
+                else:
+                    _continue_execution()
+                    
                 return
 
             # ── Fallback: ML classifier ──

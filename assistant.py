@@ -28,6 +28,7 @@ class VoiceAssistant:
     def __init__(self):
         self.model   = load_model()
         self.running = False
+        self._phrase_cnt = 0
 
     # ── NLP pipeline (ML fallback) ───────────────────────────────
     def predict_intent(self, text: str):
@@ -57,8 +58,21 @@ class VoiceAssistant:
                     response = llm_result.get("response", "Done.")
                     os_cmd   = llm_result.get("os_command")
 
-                    # Save dynamic command if it's a completely new zero-shot intent
+                    # Security: Human-in-The-Loop
                     if os_cmd and intent not in INTENT_HANDLERS:
+                        print(f"\n[SECURITY] Sypher generated a new command for '{intent}':\n  {os_cmd}")
+                        ans = input("Do you want to allow this? (y/n): ").strip().lower()
+                        if ans not in ("y", "yes"):
+                            print("[SECURITY] Command denied.")
+                            return {
+                                "input":      text,
+                                "intent":     intent,
+                                "confidence": 1.0,
+                                "response":   f"Command '{intent}' denied by user.",
+                                "params":     params,
+                                "engine":     "llm",
+                            }
+                        
                         save_dynamic_command(intent, os_cmd)
 
                     # Execute the OS command
@@ -67,15 +81,20 @@ class VoiceAssistant:
                     # Continuously learn from this command
                     if add_to_dataset(text, intent):
                         import threading
-                        print(f"[Assistant] Learning new phrase: '{text[:40]}...'")
-                        def _background_train():
-                            try:
-                                new_model = train()
-                                self.model = new_model
-                                print("[Assistant] Background ML retrain complete.")
-                            except Exception as e:
-                                print(f"[Assistant] Background train error: {e}")
-                        threading.Thread(target=_background_train, daemon=True).start()
+                        self._phrase_cnt += 1
+                        print(f"[Assistant] Learning new phrase: '{text[:40]}...' ({self._phrase_cnt}/5)")
+                        
+                        if self._phrase_cnt >= 5:
+                            self._phrase_cnt = 0
+                            print("[Assistant] Batch retraining ML model in background...")
+                            def _background_train():
+                                try:
+                                    new_model = train()
+                                    self.model = new_model
+                                    print("[Assistant] Background ML retrain complete.")
+                                except Exception as e:
+                                    print(f"[Assistant] Background train error: {e}")
+                            threading.Thread(target=_background_train, daemon=True).start()
 
                     # For dynamic intents, prefer the executor's live data
                     if intent in ("get_time", "get_date", "get_battery",
