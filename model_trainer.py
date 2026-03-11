@@ -17,17 +17,17 @@ from dataset import COMMAND_DATASET
 
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "model.pkl")
 
-# Common English stopwords (built-in, no NLTK needed)
+# Common English stopwords (built-in, no NLTK needed).
+# Action-critical words (up, down, on, off, all) are intentionally
+# excluded so they pass through to TF-IDF as meaningful features.
 _STOPWORDS = {
-    "a","an","the","is","it","in","on","at","to","for","of","and","or","but",
+    "a","an","the","is","it","in","at","to","for","of","and","or","but",
     "i","my","me","we","you","he","she","they","this","that","these","those",
     "be","are","was","were","have","has","had","do","does","did","will","would",
     "can","could","should","may","might","shall","am","been","being",
     "with","from","by","as","into","through","during","before","after",
     "please","just","now","then","so","if","about","out","there","here",
 }
-# Action words we want to KEEP even if in stopwords
-_KEEP = {"up", "down", "off", "on", "all"}
 
 
 # ──────────────────────────────────────────────
@@ -38,7 +38,7 @@ def preprocess(text: str) -> str:
     text = text.lower()
     text = text.translate(str.maketrans("", "", string.punctuation))
     tokens = text.split()
-    tokens = [t for t in tokens if t not in _STOPWORDS or t in _KEEP]
+    tokens = [t for t in tokens if t not in _STOPWORDS]
     return " ".join(tokens)
 
 

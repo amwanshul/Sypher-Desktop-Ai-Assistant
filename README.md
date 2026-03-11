@@ -1,39 +1,58 @@
 # AI-Based Voice Controlled Desktop Automation Assistant
 
-A lightweight, **fully local** desktop voice assistant that understands spoken commands
-and controls your computer — no cloud required.
+A lightweight **hybrid** desktop voice assistant that understands spoken commands
+and controls your computer.
+
+> [!NOTE]
+> **Hybrid architecture**: High-accuracy speech recognition uses the
+> Google Web Speech API (requires internet). When the cloud API is
+> unreachable, the assistant falls back to PocketSphinx for offline
+> recognition (lower accuracy). All NLP classification, slot extraction,
+> and command execution run fully locally.
 
 ---
 
 ## Features
 
 | Intent              | Example commands                                   |
-|---------------------|----------------------------------------------------|
-| Open browser        | "Open Chrome", "Launch browser"                    |
-| Open calculator     | "Open calculator", "Start calc"                    |
-| Open file explorer  | "Open file explorer", "Show my files"              |
-| Open Notepad        | "Open Notepad", "Open text editor"                 |
-| Open Task Manager   | "Open Task Manager", "Show running processes"      |
-| Close app           | "Close Chrome", "Exit application"                 |
-| Shutdown            | "Shutdown system", "Turn off computer"             |
-| Restart             | "Restart system", "Reboot"                         |
-| Volume up           | "Volume up", "Louder"                              |
-| Volume down         | "Volume down", "Quieter"                           |
-| Mute                | "Mute", "Silence"                                  |
-| Take screenshot     | "Take screenshot", "Capture screen"                |
-| Greet               | "Hello", "How are you", "What can you do"          |
+|---------------------|-----------------------------------------------------|
+| Open browser        | "Open Chrome", "Launch browser"                     |
+| Open calculator     | "Open calculator", "Start calc"                     |
+| Open file explorer  | "Open file explorer", "Show my files"               |
+| Open Notepad        | "Open Notepad", "Open text editor"                  |
+| Open Task Manager   | "Open Task Manager", "Show running processes"       |
+| Close app           | "Close Chrome", "Exit application"                  |
+| Shutdown            | "Shutdown system", "Turn off computer"              |
+| Restart             | "Restart system", "Reboot"                          |
+| Volume up / down    | "Volume up", "Louder", "Volume down", "Quieter"     |
+| Mute                | "Mute", "Silence"                                   |
+| Screenshot          | "Take screenshot", "Capture screen"                 |
+| Greet               | "Hello", "How are you", "What can you do"           |
+| **Search web**      | "Search for leetcode", "Google python tutorials"    |
+| **Search YouTube**  | "Open YouTube and search for cats"                  |
+| **Get time / date** | "What time is it", "What's today's date"            |
+| **Battery status**  | "Battery level", "Check battery"                    |
+| **IP address**      | "What's my IP"                                      |
+| **Open settings**   | "Open settings", "System preferences"               |
+| **Lock screen**     | "Lock screen", "Lock my PC"                         |
+| **Recycle Bin**     | "Empty recycle bin", "Clear trash"                  |
+| **Open terminal**   | "Open terminal", "Open command prompt"              |
+| **Open folder**     | "Open folder Documents", "Open my pictures"         |
+| Open apps           | Spotify, WhatsApp, VS Code, Excel, Word, PowerPoint |
 
 ---
 
 ## Project Structure
 
 ```
-ai_voice_assistant/
-├── assistant.py          # Main orchestrator & entry point
-├── dataset.py            # Labelled command dataset (100+ examples)
+voice_assistant/
+├── assistant.py          # Main orchestrator with wake-word detection
+├── dataset.py            # Labelled command dataset (400+ examples, 35 intents)
 ├── model_trainer.py      # TF-IDF + Logistic Regression pipeline
-├── command_executor.py   # OS-level command dispatcher
-├── voice_io.py           # Microphone input & TTS output
+├── command_executor.py   # OS-level command dispatcher (subprocess-safe)
+├── slot_extractor.py     # Parameter extraction from commands
+├── voice_io.py           # Microphone input & TTS output (hybrid cloud/local)
+├── gui.py                # Dark-terminal GUI with confidence visualisation
 ├── test_assistant.py     # Automated test suite
 ├── requirements.txt      # Python dependencies
 └── README.md
@@ -73,11 +92,17 @@ This trains the TF-IDF + Logistic Regression classifier and saves `model.pkl`.
 
 ### 3. Run the Assistant
 
+**GUI mode (recommended):**
+```bash
+python gui.py
+```
+
+**CLI mode (with wake-word detection):**
 ```bash
 python assistant.py
 ```
 
-Say a command into your microphone (or type it when prompted).
+Say **"Hey Assistant"** to activate, then speak your command.
 Say **"quit"** or **"goodbye"** to exit.
 
 ### 4. Run Tests
@@ -94,7 +119,10 @@ python test_assistant.py
 Microphone
     │
     ▼
-Voice Input (SpeechRecognition / keyboard fallback)
+Voice Input (Google Web Speech API / PocketSphinx offline fallback / keyboard)
+    │
+    ▼
+Wake-Word Detection  ("Hey Assistant" / "Sypher")
     │
     ▼
 Text Preprocessing  (lowercase → punctuation removal → tokenize → stopword removal)
@@ -106,10 +134,13 @@ TF-IDF Vectorization  (unigrams + bigrams, 500 features)
 Logistic Regression Classifier
     │
     ▼
-Intent Prediction  (with confidence score)
+Intent Prediction  (with confidence score + probability distribution)
     │
     ▼
-Command Executor  (subprocess / os – cross-platform)
+Slot Extraction  (query, folder name, app name)
+    │
+    ▼
+Command Executor  (subprocess – cross-platform, injection-safe)
     │
     ▼
 Voice Feedback  (pyttsx3 TTS)
@@ -121,12 +152,21 @@ Voice Feedback  (pyttsx3 TTS)
 
 1. **Add a new command** – add labelled examples to `dataset.py`
 2. **Add a handler** – implement a function in `command_executor.py` and register it in `INTENT_HANDLERS`
-3. **Re-train** – run `python model_trainer.py`
+3. **Add slot extraction** – if the intent needs parameters, add extraction logic in `slot_extractor.py`
+4. **Re-train** – run `python model_trainer.py`
+
+---
+
+## Security
+
+All OS-level commands use `subprocess.Popen` / `subprocess.run` with
+**list-based arguments** (no shell interpolation). User input is never
+concatenated into command strings, preventing shell injection attacks.
 
 ---
 
 ## References
 
-* Salton & Buckley (1988) – TF-IDF Text Representation  
-* Pedregosa et al. (2011) – Scikit-learn Machine Learning Library  
-* Jurafsky & Martin (2009) – Speech and Language Processing  
+* Salton & Buckley (1988) – TF-IDF Text Representation
+* Pedregosa et al. (2011) – Scikit-learn Machine Learning Library
+* Jurafsky & Martin (2009) – Speech and Language Processing

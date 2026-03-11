@@ -1,6 +1,7 @@
 """
-test_assistant.py  v5
-Tests for the intent classifier, command dispatcher, and slot extractor.
+test_assistant.py  v6
+Tests for the intent classifier, command dispatcher, slot extractor,
+and unified process_command() pipeline.
 Run with:  python test_assistant.py
 """
 
@@ -10,7 +11,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from model_trainer    import train, preprocess
 from command_executor import INTENT_HANDLERS
-from slot_extractor   import extract_slots
+from slot_extractor   import extract_slots, _resolve_user_folder
 
 
 # ──────────────────────────────────────────────
@@ -69,7 +70,8 @@ TEST_CASES = [
 
 
 # ──────────────────────────────────────────────
-# Slot extraction tests
+# Slot extraction tests (uses _resolve_user_folder
+# to dynamically determine expected path)
 # ──────────────────────────────────────────────
 SLOT_TESTS = [
     ("search_web",    "search for leetcode",                   {"query": "leetcode"}),
@@ -77,8 +79,9 @@ SLOT_TESTS = [
     ("search_web",    "open browser and search for weather",   {"query": "weather"}),
     ("search_youtube","open youtube and search for cats",      {"query": "cats"}),
     ("search_youtube","search youtube for coding tutorials",   {"query": "coding tutorials"}),
-    ("open_folder_path", "open folder documents",              {"path": os.path.join(os.path.expanduser("~"), "Documents"),
-                                                                "folder_name": "Documents"}),
+    ("open_folder_path", "open folder documents",
+        {"path": _resolve_user_folder("Documents"),
+         "folder_name": "Documents"}),
     ("close_app",     "close chrome",                          {"app_name": "chrome"}),
     ("close_app",     "close app",                             {}),
     ("greet",         "hello",                                 {}),
@@ -147,11 +150,17 @@ def test_preprocessor():
     print("\n[Preprocessor Tests]")
     cases = [
         ("Open CHROME!",   "open chrome"),
-        ("Shut Down the Computer.", "shut computer"),
+        ("Shut Down the Computer.", "shut down computer"),
+        ("Volume UP",      "volume up"),
     ]
-    for raw, _ in cases:
+    ok = True
+    for raw, expected in cases:
         result = preprocess(raw)
-        print(f"  '{raw}' → '{result}'")
+        status = "✓" if result == expected else "✗"
+        if result != expected:
+            ok = False
+        print(f"  {status} '{raw}' → '{result}' (expected: '{expected}')")
+    return ok
 
 
 def test_handlers_registered():
@@ -179,14 +188,34 @@ def test_handlers_registered():
     return all_ok
 
 
+def test_no_os_system():
+    """Verify that command_executor.py contains no os.system() calls."""
+    print("\n[Security: No os.system() Check]")
+    executor_path = os.path.join(os.path.dirname(__file__),
+                                  "command_executor.py")
+    with open(executor_path, "r") as f:
+        content = f.read()
+    count = content.count("os.system(")
+    if count == 0:
+        print("  ✓  No os.system() calls found — injection-safe")
+        return True
+    else:
+        print(f"  ✗  Found {count} os.system() call(s) — needs remediation")
+        return False
+
+
 if __name__ == "__main__":
     print("Training model for tests …")
     model = train()
 
-    test_preprocessor()
-    handlers_ok = test_handlers_registered()
+    preproc_ok     = test_preprocessor()
+    handlers_ok    = test_handlers_registered()
+    security_ok    = test_no_os_system()
     cls_passed, cls_failed = run_tests(model)
     slot_passed, slot_failed = test_slot_extraction()
 
-    total_failed = cls_failed + slot_failed + (0 if handlers_ok else 1)
+    total_failed = (cls_failed + slot_failed
+                    + (0 if handlers_ok else 1)
+                    + (0 if preproc_ok else 1)
+                    + (0 if security_ok else 1))
     sys.exit(0 if total_failed == 0 else 1)

@@ -1,94 +1,167 @@
 """
-assistant.py
-Main orchestrator – ties together voice I/O, NLP, and command execution.
+assistant.py  v3
+Main orchestrator – ties together voice I/O, LLM, NLP, slot extraction,
+and command execution.
+
+v3: LLM-first command understanding with ML classifier fallback.
 """
 
 import sys
-import string
-import pickle
 import os
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from model_trainer    import load_model, preprocess, train
+from command_executor import execute, INTENT_HANDLERS, save_dynamic_command
+from slot_extractor   import extract_slots
+from llm_engine       import llm_understand, llm_available
+from dataset          import add_to_dataset
+from voice_io         import speak, listen
 
-from model_trainer   import load_model, preprocess
-from command_executor import execute, INTENT_HANDLERS
-from voice_io        import speak, listen
-
-WAKE_WORDS  = {"hey assistant", "hello assistant", "assistant", "wake up"}
+WAKE_WORDS  = {"hey assistant", "hello assistant", "assistant", "wake up",
+               "hey sypher", "sypher", "wake up sypher"}
 QUIT_WORDS  = {"quit", "exit", "bye", "goodbye", "stop", "shut up"}
-CONFIDENCE_THRESHOLD = 0.40   # below this → ask user to repeat
+CONFIDENCE_THRESHOLD = 0.40
 
 
 class VoiceAssistant:
     def __init__(self):
-        self.model = load_model()
+        self.model   = load_model()
         self.running = False
 
-    # ── NLP pipeline ─────────────────────────────────────────────────────
+    # ── NLP pipeline (ML fallback) ───────────────────────────────
     def predict_intent(self, text: str):
-        """Return (intent_label, confidence) for *text*."""
+        """Return (intent_label, confidence) via the ML classifier."""
         processed = preprocess(text)
-        proba = self.model.predict_proba([processed])[0]
+        proba   = self.model.predict_proba([processed])[0]
         classes = self.model.classes_
-        idx = proba.argmax()
-        return classes[idx], proba[idx]
+        idx     = proba.argmax()
+        return classes[idx], float(proba[idx])
 
-    # ── Main loop ─────────────────────────────────────────────────────────
+    # ── Unified command processing (LLM-first) ──────────────────
+    def process_command(self, text: str) -> dict:
+        """
+        Process a text command end-to-end:
+          1. Try LLM (Gemini) for intent + slot extraction
+          2. Fall back to ML classifier + regex slot extraction
+          3. Execute the handler
+          4. Return a result dict
+        """
+        # ── Try LLM first ──
+        if llm_available():
+            try:
+                llm_result = llm_understand(text)
+                if llm_result and llm_result.get("intent") != "unknown":
+                    intent   = llm_result["intent"]
+                    params   = llm_result.get("params", {})
+                    response = llm_result.get("response", "Done.")
+                    os_cmd   = llm_result.get("os_command")
+
+                    # Save dynamic command if it's a completely new zero-shot intent
+                    if os_cmd and intent not in INTENT_HANDLERS:
+                        save_dynamic_command(intent, os_cmd)
+
+                    # Execute the OS command
+                    actual = execute(intent, params=params)
+                    
+                    # Continuously learn from this command
+                    if add_to_dataset(text, intent):
+                        import threading
+                        print(f"[Assistant] Learning new phrase: '{text[:40]}...'")
+                        def _background_train():
+                            try:
+                                new_model = train()
+                                self.model = new_model
+                                print("[Assistant] Background ML retrain complete.")
+                            except Exception as e:
+                                print(f"[Assistant] Background train error: {e}")
+                        threading.Thread(target=_background_train, daemon=True).start()
+
+                    # For dynamic intents, prefer the executor's live data
+                    if intent in ("get_time", "get_date", "get_battery",
+                                  "get_ip_address"):
+                        response = actual
+
+                    return {
+                        "input":      text,
+                        "intent":     intent,
+                        "confidence": 1.0,
+                        "response":   response,
+                        "params":     params,
+                        "engine":     "llm",
+                    }
+            except Exception as e:
+                print(f"[Assistant] LLM error: {e}")
+
+        # ── Fallback: ML classifier ──
+        intent, confidence = self.predict_intent(text)
+
+        if confidence < CONFIDENCE_THRESHOLD:
+            return {
+                "input":      text,
+                "intent":     "unknown",
+                "confidence": round(confidence, 4),
+                "response":   "I'm not sure what you meant. Could you please rephrase?",
+                "params":     {},
+                "engine":     "ml",
+            }
+
+        params   = extract_slots(intent, text)
+        response = execute(intent, params=params)
+
+        return {
+            "input":      text,
+            "intent":     intent,
+            "confidence": round(confidence, 4),
+            "response":   response,
+            "params":     params,
+            "engine":     "ml",
+        }
+
+    # ── Main loop (with wake-word detection) ─────────────────────
     def run(self, continuous: bool = True):
-        """
-        Continuous loop: listen → classify → execute → respond.
-        Set continuous=False for a single-shot interaction (useful in tests).
-        """
         self.running = True
-        speak("Voice Assistant is ready. Say a command or type it below.")
+        engine_str = "LLM (Gemini)" if llm_available() else "ML classifier"
+        speak(f"Voice Assistant is ready using {engine_str}. "
+              "Say 'Hey Assistant' to wake me up.")
 
         while self.running:
             text = listen()
-
             if text is None:
                 continue
 
             text_lower = text.lower().strip()
 
-            # Quit check
             if any(q in text_lower for q in QUIT_WORDS):
                 speak("Goodbye! Have a great day.")
                 self.running = False
                 break
 
-            # Predict
-            intent, confidence = self.predict_intent(text)
-            print(f"[Assistant] Intent: '{intent}'  Confidence: {confidence:.2%}")
-
-            if confidence < CONFIDENCE_THRESHOLD:
-                speak("I'm not sure what you meant. Could you please repeat that?")
-                if not continuous:
-                    break
+            if not any(w in text_lower for w in WAKE_WORDS):
                 continue
 
-            # Execute
-            response = execute(intent)
-            speak(response)
+            speak("How can I help?")
+            command_text = listen()
+
+            if command_text is None:
+                speak("I didn't catch that. Say my name again when ready.")
+                continue
+
+            if any(q in command_text.lower().strip() for q in QUIT_WORDS):
+                speak("Goodbye! Have a great day.")
+                self.running = False
+                break
+
+            result = self.process_command(command_text)
+            print(f"[Assistant] [{result['engine'].upper()}] "
+                  f"Intent: '{result['intent']}'  "
+                  f"Params: {result['params']}")
+            speak(result["response"])
 
             if not continuous:
                 break
 
-    # ── Single-command convenience method ─────────────────────────────────
-    def process_command(self, text: str) -> dict:
-        """Process a text command and return a result dict (no audio)."""
-        intent, confidence = self.predict_intent(text)
-        return {
-            "input":      text,
-            "intent":     intent,
-            "confidence": round(float(confidence), 4),
-            "response":   execute(intent) if confidence >= CONFIDENCE_THRESHOLD
-                          else "Low confidence – please rephrase.",
-        }
 
-
-# ──────────────────────────────────────────────
-# Entry point
-# ──────────────────────────────────────────────
 if __name__ == "__main__":
     assistant = VoiceAssistant()
     try:

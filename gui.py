@@ -1,15 +1,11 @@
 """
-gui.py  v5
+gui.py  v6
 ─────────────────────────────────────────────────────────────────
 Dark-terminal GUI for the AI Voice Assistant.
 Continuous listening mode: click START → listens in a loop until
 you say "stop" / "quit" / "goodbye" or click STOP.
 
-New in v5:
-  - Per-class probability distribution bars in the log
-  - Slot-filled parameters displayed as tags
-  - Slot extraction + parameterised execute() integration
-  - Updated sidebar with SEARCH and SYSTEM command groups
+v6: LLM-first command understanding (Gemini Flash) with ML fallback.
 
 Run:  python gui.py
 ─────────────────────────────────────────────────────────────────
@@ -24,9 +20,11 @@ import tkinter as tk
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from model_trainer    import load_model, preprocess
-from command_executor import execute, INTENT_HANDLERS
+from model_trainer    import load_model, preprocess, train
+from command_executor import execute, INTENT_HANDLERS, save_dynamic_command
 from slot_extractor   import extract_slots
+from llm_engine       import llm_understand, llm_available
+from dataset          import add_to_dataset
 
 try:
     import speech_recognition as sr
@@ -147,7 +145,7 @@ class LogEntry:
               "system": TEXT_MID, "error": ACCENT2}
 
     def __init__(self, parent, role, text, intent="", conf=0,
-                 proba_data=None, slot_tags=None):
+                 proba_data=None, slot_tags=None, engine=""):
         """
         proba_data : list of (class_name, probability) sorted desc, top N
         slot_tags  : dict  e.g. {"query": "leetcode"}
@@ -179,6 +177,11 @@ class LogEntry:
                   else ACCENT2)
             tk.Label(hdr, text=f"{conf:.0%}", fg=cc, bg=PANEL,
                      font=(FONT_MONO, 8)).pack(side=tk.LEFT)
+        if engine:
+            ebg = "#7c3aed" if engine == "LLM" else BORDER
+            tk.Label(hdr, text=f" {engine} ", fg=TEXT_HI, bg=ebg,
+                     font=(FONT_MONO, 6, "bold"),
+                     padx=3, pady=0).pack(side=tk.LEFT, padx=4)
 
         # ── Slot tags (e.g.  query="leetcode") ──
         if slot_tags:
@@ -525,9 +528,9 @@ class AssistantGUI(tk.Tk):
 
     # ── logging ───────────────────────────────────────────────────
     def _add_log(self, role, text, intent="", conf=0,
-                 proba_data=None, slot_tags=None):
+                 proba_data=None, slot_tags=None, engine=""):
         LogEntry(self._log_frame, role, text, intent, conf,
-                 proba_data, slot_tags)
+                 proba_data, slot_tags, engine)
         self.after(50, lambda: self._canvas.yview_moveto(1.0))
 
     def _clear_log(self):
@@ -537,15 +540,15 @@ class AssistantGUI(tk.Tk):
 
     # ── queue ─────────────────────────────────────────────────────
     def _post(self, role, text, intent="", conf=0.0,
-              proba_data=None, slot_tags=None):
-        self._msg_queue.put((role, text, intent, conf, proba_data, slot_tags))
+              proba_data=None, slot_tags=None, engine=""):
+        self._msg_queue.put((role, text, intent, conf, proba_data, slot_tags, engine))
 
     def _poll_queue(self):
         try:
             while True:
-                role, text, intent, conf, proba_data, slot_tags = \
+                role, text, intent, conf, proba_data, slot_tags, engine = \
                     self._msg_queue.get_nowait()
-                self._add_log(role, text, intent, conf, proba_data, slot_tags)
+                self._add_log(role, text, intent, conf, proba_data, slot_tags, engine)
                 self._statusbar.config(text=f"  {text[:90]}")
         except queue.Empty:
             pass
@@ -677,15 +680,63 @@ class AssistantGUI(tk.Tk):
         self._post("system", "Continuous listening stopped.")
 
     # ══════════════════════════════════════════════════════════════
-    # NLP + slot extraction + execution
+    # LLM-first command understanding + ML fallback + execution
     # ══════════════════════════════════════════════════════════════
     def _process_command(self, text: str, block: bool = False):
-        if self._model is None:
-            self._post("error", "Model not loaded yet. Please wait.")
-            return
-
         def _run():
             self._post("user", text)
+
+            # ── Try LLM first ──
+            llm_result = None
+            if llm_available():
+                try:
+                    llm_result = llm_understand(text)
+                except Exception as e:
+                    print(f"[GUI] LLM error: {e}")
+
+            if llm_result and llm_result.get("intent") != "unknown":
+                intent   = llm_result["intent"]
+                params   = llm_result.get("params", {})
+                response = llm_result.get("response", "Done.")
+                os_cmd   = llm_result.get("os_command", None)
+
+                # Save dynamic command if it's a completely new zero-shot intent
+                if os_cmd and intent not in INTENT_HANDLERS:
+                    save_dynamic_command(intent, os_cmd)
+
+                # Slot tags for display
+                slot_tags = {k: v for k, v in params.items() if k != "path"}
+
+                # Continuously learn from this command
+                if add_to_dataset(text, intent):
+                    self._post("system", f"Learning new phrase: '{text[:30]}...'")
+                    def _background_train():
+                        try:
+                            new_model = train()
+                            self._model = new_model
+                            self._post("system", "ML model updated with new vocabulary.")
+                        except Exception as e:
+                            print(f"[GUI] Background train failed: {e}")
+                    threading.Thread(target=_background_train, daemon=True).start()
+
+                # Still execute the actual OS command
+                actual_response = execute(intent, params=params)
+                # Prefer the LLM's friendly response, but use executor
+                # response for dynamic intents (time, battery, etc.)
+                if intent in ("get_time", "get_date", "get_battery",
+                              "get_ip_address"):
+                    response = actual_response
+
+                self._post("assistant", response, intent, 0,
+                           slot_tags=slot_tags or None, engine="LLM")
+                speak_async(response)
+                return
+
+            # ── Fallback: ML classifier ──
+            if self._model is None:
+                self._post("error", "Model not loaded and LLM unavailable.")
+                return
+
             processed = preprocess(text)
             proba   = self._model.predict_proba([processed])[0]
             classes = self._model.classes_
@@ -693,7 +744,6 @@ class AssistantGUI(tk.Tk):
             intent  = classes[idx]
             conf    = float(proba[idx])
 
-            # Build top-N probability distribution for display
             sorted_indices = proba.argsort()[::-1][:TOP_N_CLASSES]
             proba_data = [(classes[i], float(proba[i]))
                           for i in sorted_indices]
@@ -701,23 +751,17 @@ class AssistantGUI(tk.Tk):
             if conf < CONFIDENCE_THRESHOLD:
                 msg = "I'm not sure what you meant. Could you rephrase?"
                 self._post("assistant", msg, "unknown", conf,
-                           proba_data=proba_data)
+                           proba_data=proba_data, engine="ML")
                 speak_async(msg)
                 return
 
-            # Extract slots from original (raw) text
             params = extract_slots(intent, text)
-
-            # Build slot tags for display (filter out long paths)
-            slot_tags = {}
-            for k, v in params.items():
-                if k == "path":
-                    continue  # don't show full path, show folder_name instead
-                slot_tags[k] = v
+            slot_tags = {k: v for k, v in params.items() if k != "path"}
 
             response = execute(intent, params=params)
             self._post("assistant", response, intent, conf,
-                       proba_data=proba_data, slot_tags=slot_tags or None)
+                       proba_data=proba_data, slot_tags=slot_tags or None,
+                       engine="ML")
             speak_async(response)
 
         if block:

@@ -1,6 +1,11 @@
 """
 voice_io.py
 Handles microphone input (speech → text) and speaker output (text → speech).
+
+NOTE: The primary STT engine (Google Web Speech API) requires an internet
+connection. An offline fallback via PocketSphinx is attempted when Google
+is unreachable, but accuracy will be significantly lower. See README.md
+for details on the "Hybrid" architecture.
 """
 
 import sys
@@ -47,12 +52,16 @@ def listen(timeout: int = 5, phrase_limit: int = 8) -> str | None:
     """
     Listen via microphone and return the recognised text, or None on failure.
     Falls back to keyboard input when SpeechRecognition is unavailable.
+
+    NOTE: Uses Google Web Speech API (cloud) for primary recognition.
+    Falls back to PocketSphinx (offline) when the cloud API is unreachable.
     """
     if not SR_AVAILABLE:
         return _keyboard_fallback()
 
     recognizer = sr.Recognizer()
-    recognizer.energy_threshold = 300
+    # Let dynamic adjustment set the threshold from actual ambient noise;
+    # no hardcoded energy_threshold needed.
     recognizer.dynamic_energy_threshold = True
 
     try:
@@ -72,7 +81,7 @@ def listen(timeout: int = 5, phrase_limit: int = 8) -> str | None:
         print(f"[VoiceIO] Microphone error: {e}")
         return _keyboard_fallback()
 
-    # Try Google Web Speech API first (free, no key needed)
+    # Try Google Web Speech API first (free, no key needed, requires internet)
     try:
         text = recognizer.recognize_google(audio)
         print(f"[VoiceIO] Heard: '{text}'")

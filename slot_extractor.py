@@ -10,9 +10,78 @@ to extract for that intent).
 
 import re
 import os
+import platform
 
 
-# ── Known user folders (mapped to ~ paths) ────────────────────
+# ─────────────────────────────────────────────────────────────
+# Windows shell-folder resolution via environment / registry
+# ─────────────────────────────────────────────────────────────
+
+def _resolve_user_folder(canonical_name: str) -> str:
+    """
+    Resolve a canonical folder name (e.g. 'Documents', 'Pictures')
+    to the actual path on the current OS, using environment variables
+    and registry lookups for non-English localisations.
+
+    Falls back to ~/canonical_name if nothing better is found.
+    """
+    # ── Windows: try the Shell Folders registry key ──
+    if platform.system() == "Windows":
+        # Map canonical names to Shell Folder registry value names
+        _SHELL_FOLDER_MAP = {
+            "Documents": "Personal",
+            "Pictures":  "{0DDD015D-B06C-45D5-8C4C-F59713854639}",
+            "Music":     "My Music",
+            "Videos":    "My Video",
+            "Downloads": "{374DE290-123F-4565-9164-39C4925E467B}",
+            "Desktop":   "Desktop",
+        }
+        reg_value = _SHELL_FOLDER_MAP.get(canonical_name)
+        if reg_value:
+            try:
+                import winreg
+                key = winreg.OpenKey(
+                    winreg.HKEY_CURRENT_USER,
+                    r"Software\Microsoft\Windows\CurrentVersion"
+                    r"\Explorer\User Shell Folders"
+                )
+                path, _ = winreg.QueryValueEx(key, reg_value)
+                winreg.CloseKey(key)
+                # Expand %USERPROFILE% and similar env vars
+                path = os.path.expandvars(path)
+                if os.path.isdir(path):
+                    return path
+            except (ImportError, FileNotFoundError, OSError):
+                pass
+
+        # Fallback: USERPROFILE (still locale-independent)
+        profile = os.environ.get("USERPROFILE", os.path.expanduser("~"))
+        candidate = os.path.join(profile, canonical_name)
+        if os.path.isdir(candidate):
+            return candidate
+
+    # ── macOS / Linux: XDG or simple ~ expansion ──
+    if platform.system() != "Windows":
+        # Try XDG user dirs on Linux
+        xdg_map = {
+            "Documents": "XDG_DOCUMENTS_DIR",
+            "Pictures":  "XDG_PICTURES_DIR",
+            "Music":     "XDG_MUSIC_DIR",
+            "Videos":    "XDG_VIDEOS_DIR",
+            "Downloads": "XDG_DOWNLOAD_DIR",
+            "Desktop":   "XDG_DESKTOP_DIR",
+        }
+        xdg_var = xdg_map.get(canonical_name)
+        if xdg_var:
+            xdg_val = os.environ.get(xdg_var)
+            if xdg_val and os.path.isdir(xdg_val):
+                return xdg_val
+
+    # ── Final fallback ──
+    return os.path.join(os.path.expanduser("~"), canonical_name)
+
+
+# ── Known user folders (keyword → canonical name) ─────────────
 _KNOWN_FOLDERS = {
     "documents":  "Documents",
     "document":   "Documents",
@@ -80,7 +149,7 @@ def extract_slots(intent: str, raw_text: str) -> dict:
     extract any parameters required by the handler.
 
     Returns:
-        dict  – e.g. {"query": "leetcode"}, {"path": "Documents"},
+        dict  – e.g. {"query": "leetcode"}, {"path": "C:\\...\\Documents"},
                 or {} if no slots needed.
     """
     text = raw_text.strip()
@@ -124,7 +193,7 @@ def _extract_search_query(text: str, prefixes: list) -> dict:
 
 
 def _extract_folder_path(text: str) -> dict:
-    """Extract a known folder name from the text."""
+    """Extract a known folder name and resolve to actual OS path."""
     lower = text.lower()
     # Try to strip prefixes first
     remainder = lower
@@ -138,12 +207,12 @@ def _extract_folder_path(text: str) -> dict:
     # Match against known folders
     if remainder in _KNOWN_FOLDERS:
         folder = _KNOWN_FOLDERS[remainder]
-        full_path = os.path.join(os.path.expanduser("~"), folder)
+        full_path = _resolve_user_folder(folder)
         return {"path": full_path, "folder_name": folder}
     # Try to find any known folder word anywhere in text
     for keyword, folder in _KNOWN_FOLDERS.items():
         if keyword in lower.split():
-            full_path = os.path.join(os.path.expanduser("~"), folder)
+            full_path = _resolve_user_folder(folder)
             return {"path": full_path, "folder_name": folder}
     return {}
 

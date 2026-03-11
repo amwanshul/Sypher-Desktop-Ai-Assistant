@@ -22,9 +22,36 @@ import subprocess
 import datetime
 import time
 import socket
+import json
 from urllib.parse import quote_plus
 
 OS = platform.system()   # "Windows" | "Darwin" | "Linux"
+_DYNAMIC_COMMANDS_PATH = os.path.join(os.path.dirname(__file__), "dynamic_commands.json")
+
+
+# ─────────────────────────────────────────────────────────────
+# Dynamic Commands (LLM Zero-Shot)
+# ─────────────────────────────────────────────────────────────
+
+def get_dynamic_commands() -> dict:
+    if not os.path.exists(_DYNAMIC_COMMANDS_PATH):
+        return {}
+    try:
+        with open(_DYNAMIC_COMMANDS_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"[Executor] Error loading dynamic commands: {e}")
+        return {}
+
+def save_dynamic_command(intent: str, os_command: str):
+    cmds = get_dynamic_commands()
+    cmds[intent] = os_command
+    try:
+        with open(_DYNAMIC_COMMANDS_PATH, "w", encoding="utf-8") as f:
+            json.dump(cmds, f, indent=4)
+        print(f"[Executor] Saved dynamic command: '{intent}' -> '{os_command}'")
+    except Exception as e:
+        print(f"[Executor] Error saving dynamic command: {e}")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -35,7 +62,7 @@ def _open_url(url: str) -> bool:
     """Open a URL in the system default browser."""
     try:
         if OS == "Windows":
-            os.system(f'start "" "{url}"')
+            subprocess.Popen(["cmd", "/c", "start", "", url])
         elif OS == "Darwin":
             subprocess.Popen(["open", url])
         else:
@@ -51,7 +78,7 @@ def _open_folder(path: str) -> bool:
     try:
         os.makedirs(path, exist_ok=True)   # create if missing (e.g. Downloads)
         if OS == "Windows":
-            os.system(f'explorer "{path}"')
+            subprocess.Popen(["explorer", path])
         elif OS == "Darwin":
             subprocess.Popen(["open", path])
         else:
@@ -120,7 +147,7 @@ def _win_open_office(exe_name: str, fallback_cmd: str) -> bool:
     path = _win_find_office_exe(exe_name)
     if path:
         return _launch(path)
-    os.system(f"start {fallback_cmd}")
+    subprocess.Popen(["cmd", "/c", "start", fallback_cmd])
     return True
 
 
@@ -128,10 +155,11 @@ def _win_open_office(exe_name: str, fallback_cmd: str) -> bool:
 # Windows volume / mute
 # ─────────────────────────────────────────────────────────────
 def _win_send_vk(code: int):
-    os.system(
-        f'powershell -NoProfile -Command '
-        f'"$wsh = New-Object -ComObject WScript.Shell; '
-        f'$wsh.SendKeys([char]{code})"'
+    subprocess.run(
+        ["powershell", "-NoProfile", "-Command",
+         f"$wsh = New-Object -ComObject WScript.Shell; "
+         f"$wsh.SendKeys([char]{code})"],
+        capture_output=True, timeout=10
     )
 
 
@@ -277,14 +305,14 @@ def _close_app_windows(params: dict = None) -> bool:
         app = params["app_name"].lower()
         exe = _APP_NAME_MAP.get(app)
         if exe:
-            os.system(f'taskkill /F /IM "{exe}"')
+            subprocess.run(["taskkill", "/F", "/IM", exe], capture_output=True)
             print(f"[Executor] Closed {exe}")
             return True
     # Fallback: close the highest-priority running app
     running = _get_running_procs_windows()
     for exe in _WIN_CLOSE_PRIORITY:
         if exe.lower() in running:
-            os.system(f'taskkill /F /IM "{exe}"')
+            subprocess.run(["taskkill", "/F", "/IM", exe], capture_output=True)
             print(f"[Executor] Closed {exe}")
             return True
     print("[Executor] No recognised closeable app found running.")
@@ -301,7 +329,7 @@ def open_browser(**kw):
 
 def open_calculator(**kw):
     if OS == "Windows":
-        os.system("calc")
+        subprocess.Popen(["calc"])
     elif OS == "Darwin":
         subprocess.Popen(["open", "-a", "Calculator"])
     else:
@@ -311,7 +339,7 @@ def open_calculator(**kw):
 
 def open_file_explorer(**kw):
     if OS == "Windows":
-        os.system("explorer")
+        subprocess.Popen(["explorer"])
     elif OS == "Darwin":
         subprocess.Popen(["open", os.path.expanduser("~")])
     else:
@@ -321,7 +349,7 @@ def open_file_explorer(**kw):
 
 def open_notepad(**kw):
     if OS == "Windows":
-        os.system("notepad")
+        subprocess.Popen(["notepad"])
     elif OS == "Darwin":
         subprocess.Popen(["open", "-a", "TextEdit"])
     else:
@@ -336,7 +364,7 @@ def open_notepad(**kw):
 
 def open_task_manager(**kw):
     if OS == "Windows":
-        os.system("taskmgr")
+        subprocess.Popen(["taskmgr"])
     elif OS == "Darwin":
         subprocess.Popen(["open", "-a", "Activity Monitor"])
     else:
@@ -375,7 +403,7 @@ def close_app(params=None, **kw):
 
 def shutdown(**kw):
     if OS == "Windows":
-        os.system("shutdown /s /t 5")
+        subprocess.Popen(["shutdown", "/s", "/t", "5"])
     else:
         subprocess.call(["sudo", "shutdown", "-h", "now"])
     return True
@@ -383,7 +411,7 @@ def shutdown(**kw):
 
 def restart(**kw):
     if OS == "Windows":
-        os.system("shutdown /r /t 5")
+        subprocess.Popen(["shutdown", "/r", "/t", "5"])
     elif OS == "Darwin":
         subprocess.call(["sudo", "shutdown", "-r", "now"])
     else:
@@ -594,7 +622,7 @@ def open_vscode(**kw):
             return True
         except FileNotFoundError:
             pass
-        os.system("code")
+        subprocess.Popen(["code"], shell=True)
     elif OS == "Darwin":
         try:
             subprocess.Popen(["open", "-a", "Visual Studio Code"])
@@ -658,7 +686,7 @@ def get_ip_address(**kw):
 
 def open_settings(**kw):
     if OS == "Windows":
-        os.system("start ms-settings:")
+        subprocess.Popen(["cmd", "/c", "start", "ms-settings:"])
     elif OS == "Darwin":
         subprocess.Popen(["open", "-a", "System Preferences"])
     else:
@@ -673,7 +701,7 @@ def open_settings(**kw):
 
 def lock_screen(**kw):
     if OS == "Windows":
-        os.system("rundll32.exe user32.dll,LockWorkStation")
+        subprocess.Popen(["rundll32.exe", "user32.dll,LockWorkStation"])
     elif OS == "Darwin":
         subprocess.call(["/System/Library/CoreServices/Menu Extras"
                          "/User.menu/Contents/Resources/CGSession", "-suspend"])
@@ -709,7 +737,7 @@ def empty_recycle_bin(**kw):
 
 def open_cmd(**kw):
     if OS == "Windows":
-        os.system("start cmd")
+        subprocess.Popen(["cmd", "/c", "start", "cmd"])
     elif OS == "Darwin":
         subprocess.Popen(["open", "-a", "Terminal"])
     else:
@@ -864,8 +892,19 @@ def execute(intent: str, params: dict = None) -> str:
     """
     Dispatch an intent to its handler and return a response string.
     Supports parameterised intents via the optional `params` dict.
+    If the intent is a known dynamic command, runs it zero-shot.
     """
     if intent not in INTENT_HANDLERS:
+        # Check dynamic commands (LLM-synthesised zero-shot intents)
+        dyn_cmds = get_dynamic_commands()
+        if intent in dyn_cmds:
+            os_cmd = dyn_cmds[intent]
+            try:
+                subprocess.Popen(os_cmd, shell=True)
+                return f"Executing dynamic command: {intent.replace('_', ' ')}"
+            except Exception as e:
+                return f"Failed to execute dynamic command: {e}"
+                
         return f"I don't know how to handle '{intent}' yet."
 
     handler, default_response = INTENT_HANDLERS[intent]

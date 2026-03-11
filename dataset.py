@@ -463,3 +463,46 @@ COMMAND_DATASET = [
     ("open console",           "open_cmd"),
     ("open shell",             "open_cmd"),
 ]
+
+
+def add_to_dataset(text: str, intent: str) -> bool:
+    """
+    Appends a new (command, intent) pair to dataset.py on disk
+    if it doesn't already exist.
+    Returns True if successfully added.
+    """
+    text = text.lower().strip()
+    
+    # Check if already exists in memory
+    for existing_text, _ in COMMAND_DATASET:
+        if existing_text == text:
+            return False
+            
+    # Always append to memory list immediately
+    COMMAND_DATASET.append((text, intent))
+    
+    # Save permanently to disk
+    import os
+    file_path = os.path.abspath(__file__)
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+            
+        # Reverse search for the closing bracket
+        insert_idx = -1
+        for i in range(len(lines)-1, -1, -1):
+            if lines[i].strip() == "]":
+                insert_idx = i
+                break
+                
+        if insert_idx != -1:
+            line_to_add = f'    ("{text}", {" " * max(0, 24 - len(text))}"{intent}"),\n'
+            lines.insert(insert_idx, line_to_add)
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.writelines(lines)
+            print(f"[Dataset] Learned new command: '{text}' → '{intent}'")
+            return True
+    except Exception as e:
+        print(f"[Dataset] Failed to save new command to disk: {e}")
+        
+    return False
