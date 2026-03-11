@@ -198,9 +198,17 @@ class LogEntry:
                          padx=2, pady=0).pack(side=tk.LEFT, padx=2)
 
         # ── Main text ──
-        tk.Label(col, text=text, fg=TEXT_HI, bg=PANEL,
-                 font=(FONT_UI, 10), wraplength=520,
-                 justify=tk.LEFT, anchor="w").pack(fill=tk.X, pady=(2, 0))
+        # Use a selectable Text widget instead of a Label
+        lines = len(text.split('\n'))
+        for line in text.split('\n'):
+            lines += max(0, len(line) // 65)
+            
+        text_widget = tk.Text(col, fg=TEXT_HI, bg=PANEL, font=(FONT_UI, 10),
+                              wrap=tk.WORD, bd=0, highlightthickness=0,
+                              height=lines, width=60)
+        text_widget.insert("1.0", text)
+        text_widget.configure(state="disabled") # Prevent editing but allow selection
+        text_widget.pack(fill=tk.X, pady=(2, 0))
 
         # ── Probability distribution bars (top N classes) ──
         if proba_data and len(proba_data) > 0:
@@ -443,6 +451,15 @@ class AssistantGUI(tk.Tk):
         self._log_frame = tk.Frame(self._canvas, bg=BG)
         self._log_win   = self._canvas.create_window(
             (0, 0), window=self._log_frame, anchor="nw")
+            
+        def _on_mousewheel(event):
+            # Only scroll if log_frame is taller than the canvas
+            if self._log_frame.winfo_height() > self._canvas.winfo_height():
+                self._canvas.yview_scroll(-1 * (event.delta // 120), "units")
+
+        log_outer.bind("<Enter>", lambda e: log_outer.bind_all("<MouseWheel>", _on_mousewheel))
+        log_outer.bind("<Leave>", lambda e: log_outer.unbind_all("<MouseWheel>"))
+
         self._log_frame.bind("<Configure>", lambda e: self._canvas.configure(
             scrollregion=self._canvas.bbox("all")))
         self._canvas.bind("<Configure>", lambda e: self._canvas.itemconfig(

@@ -1,4 +1,4 @@
-"""
+v"""
 plugins/media.py
 Media controls like Volume and Mute.
 """

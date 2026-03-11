@@ -8,47 +8,47 @@ import subprocess
 from . import register_intent
 from .utils import OS, open_folder
 
-@register_intent("take_screenshot", "Taking a screenshot.")
+@register_intent("take_screenshot", "Taking a screenshot.", is_dynamic=True)
 def take_screenshot(**kw):
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    filepath  = os.path.join(os.path.expanduser("~"), f"screenshot_{timestamp}.png")
+    filepath  = os.path.join(os.path.expanduser("~"), "Pictures", f"screenshot_{timestamp}.png")
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    success = False
+
     if OS == "Windows":
-        ps_cmd = "; ".join([
-            "Add-Type -AssemblyName System.Windows.Forms", "Add-Type -AssemblyName System.Drawing",
-            "$b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds", "$bmp = New-Object System.Drawing.Bitmap($b.Width, $b.Height)",
-            "$g = [System.Drawing.Graphics]::FromImage($bmp)", "$g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size, [System.Drawing.CopyPixelOperation]::SourceCopy)",
-            f"$bmp.Save('{filepath.replace(chr(92), '/')}', [System.Drawing.Imaging.ImageFormat]::Png)", "$g.Dispose()", "$bmp.Dispose()"
-        ])
-        try:
-            r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd], capture_output=True, text=True, timeout=20)
-            if r.returncode == 0 and os.path.exists(filepath): return True
-        except Exception: pass
-        
-        try:
-            from PIL import ImageGrab
-            ImageGrab.grab(all_screens=True).save(filepath)
-            return True
-        except Exception: pass
-        
         try:
             import pyautogui
             pyautogui.screenshot(filepath)
-            return True
+            success = True
         except Exception: pass
-        return False
-    elif OS == "Darwin":
-        subprocess.call(["screencapture", filepath])
-        return True
-    else:
-        try:
-            subprocess.call(["scrot", filepath])
-            return True
-        except FileNotFoundError:
+            
+        if not success:
             try:
                 from PIL import ImageGrab
                 ImageGrab.grab().save(filepath)
-                return True
-            except Exception: return False
+                success = True
+            except Exception: pass
+            
+    elif OS == "Darwin":
+        try:
+            subprocess.call(["screencapture", "-x", filepath])
+            success = True
+        except Exception: pass
+        
+    else:
+        try:
+            subprocess.call(["scrot", "-m", filepath])
+            success = True
+        except FileNotFoundError:
+            try:
+                from PIL import ImageGrab
+                ImageGrab.grab(all_screens=True).save(filepath)
+                success = True
+            except Exception: pass
+
+    if success:
+        return f"Screenshot saved to {filepath}"
+    return False
 
 @register_intent("open_file_explorer", "Opening File Explorer.")
 def open_file_explorer(**kw):
