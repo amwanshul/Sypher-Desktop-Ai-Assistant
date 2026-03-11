@@ -253,17 +253,85 @@ class AssistantGUI(tk.Tk):
                 command=self._on_mode_change,
             ).pack(pady=3)
 
-        # commands list
+        # commands list (interactive dropdowns)
         cf = tk.Frame(left, bg=BG)
-        cf.pack(pady=(20, 0), padx=10, fill=tk.X)
+        cf.pack(pady=(20, 0), padx=10, fill=tk.BOTH, expand=True)
         tk.Label(cf, text="COMMANDS", fg=TEXT_DIM, bg=BG,
-                 font=(FONT_MONO, 7, "bold")).pack(anchor="w")
-        for c in ["open browser","open calculator","file explorer",
-                  "open notepad","task manager","close app",
-                  "volume up/down","mute","screenshot",
-                  "shutdown","restart","hello"]:
-            tk.Label(cf, text=f"  › {c}", fg=TEXT_DIM, bg=BG,
-                     font=(FONT_MONO, 7), anchor="w").pack(fill=tk.X)
+                 font=(FONT_MONO, 7, "bold")).pack(anchor="w", pady=(0, 4))
+
+        cmd_canvas = tk.Canvas(cf, bg=BG, highlightthickness=0, width=140)
+        cmd_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        cmd_inner = tk.Frame(cmd_canvas, bg=BG)
+        cmd_canvas.create_window((0, 0), window=cmd_inner, anchor="nw")
+        cmd_inner.bind("<Configure>", lambda e: cmd_canvas.configure(
+            scrollregion=cmd_canvas.bbox("all")))
+        cmd_canvas.bind("<MouseWheel>",
+            lambda e: cmd_canvas.yview_scroll(-1 * (e.delta // 120), "units"))
+
+        cmd_groups = [
+            ("CORE", [
+                "open browser", "open calculator", "file explorer",
+                "open notepad", "task manager", "close app",
+                "volume up/down", "mute", "screenshot",
+                "shutdown", "restart", "hello",
+            ]),
+            ("WEB", [
+                "search google", "open youtube", "open gmail",
+            ]),
+            ("FILES", [
+                "open downloads", "open desktop", "create folder",
+            ]),
+            ("APPS", [
+                "open spotify", "open whatsapp", "open vscode",
+                "open excel", "open word", "open powerpoint",
+            ]),
+        ]
+
+        for group_name, cmds in cmd_groups:
+            # Container for each dropdown group
+            group_frame = tk.Frame(cmd_inner, bg=BG)
+            group_frame.pack(fill=tk.X, pady=(2, 0))
+
+            # Items frame (hidden by default)
+            items_frame = tk.Frame(group_frame, bg=BG)
+            for c in cmds:
+                tk.Label(items_frame, text=f"  › {c}", fg=TEXT_DIM, bg=BG,
+                         font=(FONT_MONO, 7), anchor="w").pack(fill=tk.X)
+
+            # State tracker
+            expanded = tk.BooleanVar(value=False)
+
+            # Header button
+            hdr_btn = tk.Label(
+                group_frame,
+                text=f"  ▸  {group_name}",
+                fg=TEXT_MID, bg=BG,
+                font=(FONT_MONO, 8, "bold"),
+                anchor="w", cursor="hand2",
+                padx=2, pady=4,
+            )
+            hdr_btn.pack(fill=tk.X)
+
+            # Separator line under header
+            sep = tk.Frame(group_frame, bg=BORDER, height=1)
+            sep.pack(fill=tk.X, padx=4)
+
+            def _toggle(ev=None, _hdr=hdr_btn, _items=items_frame,
+                        _exp=expanded, _name=group_name):
+                if _exp.get():
+                    _items.pack_forget()
+                    _hdr.config(text=f"  ▸  {_name}")
+                    _exp.set(False)
+                else:
+                    _items.pack(fill=tk.X)
+                    _hdr.config(text=f"  ▾  {_name}")
+                    _exp.set(True)
+
+            hdr_btn.bind("<Button-1>", _toggle)
+            hdr_btn.bind("<Enter>",
+                lambda e, h=hdr_btn: h.config(fg=ACCENT, bg="#131820"))
+            hdr_btn.bind("<Leave>",
+                lambda e, h=hdr_btn: h.config(fg=TEXT_MID, bg=BG))
 
         tk.Frame(body, bg=BORDER, width=1).pack(side=tk.LEFT, fill=tk.Y)
 
