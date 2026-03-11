@@ -1,9 +1,16 @@
 """
-gui.py
+gui.py  v5
 ─────────────────────────────────────────────────────────────────
 Dark-terminal GUI for the AI Voice Assistant.
 Continuous listening mode: click START → listens in a loop until
 you say "stop" / "quit" / "goodbye" or click STOP.
+
+New in v5:
+  - Per-class probability distribution bars in the log
+  - Slot-filled parameters displayed as tags
+  - Slot extraction + parameterised execute() integration
+  - Updated sidebar with SEARCH and SYSTEM command groups
+
 Run:  python gui.py
 ─────────────────────────────────────────────────────────────────
 """
@@ -19,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from model_trainer    import load_model, preprocess
 from command_executor import execute, INTENT_HANDLERS
+from slot_extractor   import extract_slots
 
 try:
     import speech_recognition as sr
@@ -42,6 +50,7 @@ BORDER  = "#1e2530"
 ACCENT  = "#00e5ff"
 ACCENT2 = "#ff3d71"
 ACCENT3 = "#39ff14"
+ACCENT4 = "#ffb300"   # amber / warning
 TEXT_HI  = "#e8eaf0"
 TEXT_MID = "#7a8499"
 TEXT_DIM = "#3a4050"
@@ -51,7 +60,8 @@ FONT_UI   = "Helvetica"
 CONFIDENCE_THRESHOLD = 0.40
 STOP_WORDS = {"stop", "quit", "exit", "bye", "goodbye", "stop listening",
               "stop now", "pause", "that's all", "thats all"}
-WIN_W, WIN_H = 780, 680
+WIN_W, WIN_H = 820, 720
+TOP_N_CLASSES = 5     # how many classes to show in the probability distribution
 
 
 # ── TTS ───────────────────────────────────────────────────────────
@@ -129,14 +139,19 @@ class PulseRing(tk.Canvas):
 
 
 # ════════════════════════════════════════════════════════════════
-# Log row
+# Log row  (with optional probability distribution + slot tags)
 # ════════════════════════════════════════════════════════════════
 class LogEntry:
     ICONS  = {"user": "▶", "assistant": "◆", "system": "⬡", "error": "✕"}
     COLORS = {"user": ACCENT, "assistant": ACCENT3,
               "system": TEXT_MID, "error": ACCENT2}
 
-    def __init__(self, parent, role, text, intent="", conf=0):
+    def __init__(self, parent, role, text, intent="", conf=0,
+                 proba_data=None, slot_tags=None):
+        """
+        proba_data : list of (class_name, probability) sorted desc, top N
+        slot_tags  : dict  e.g. {"query": "leetcode"}
+        """
         color = self.COLORS.get(role, TEXT_MID)
         row = tk.Frame(parent, bg=PANEL, pady=6, padx=10)
         row.pack(fill=tk.X, pady=2, padx=6)
@@ -149,6 +164,7 @@ class LogEntry:
         col = tk.Frame(row, bg=PANEL)
         col.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
+        # ── Header row: ROLE + INTENT badge + confidence ──
         hdr = tk.Frame(col, bg=PANEL)
         hdr.pack(fill=tk.X)
         tk.Label(hdr, text=role.upper(), fg=color, bg=PANEL,
@@ -159,14 +175,68 @@ class LogEntry:
                          side=tk.LEFT, padx=6)
         if conf:
             cc = (ACCENT3 if conf >= 0.65
-                  else TEXT_MID if conf >= CONFIDENCE_THRESHOLD
+                  else ACCENT4 if conf >= CONFIDENCE_THRESHOLD
                   else ACCENT2)
             tk.Label(hdr, text=f"{conf:.0%}", fg=cc, bg=PANEL,
                      font=(FONT_MONO, 8)).pack(side=tk.LEFT)
 
+        # ── Slot tags (e.g.  query="leetcode") ──
+        if slot_tags:
+            tag_frame = tk.Frame(hdr, bg=PANEL)
+            tag_frame.pack(side=tk.LEFT, padx=(10, 0))
+            for k, v in slot_tags.items():
+                display_v = str(v)
+                if len(display_v) > 30:
+                    display_v = display_v[:27] + "…"
+                tk.Label(tag_frame,
+                         text=f' {k}="{display_v}" ',
+                         fg=PANEL, bg=ACCENT4,
+                         font=(FONT_MONO, 6, "bold"),
+                         padx=2, pady=0).pack(side=tk.LEFT, padx=2)
+
+        # ── Main text ──
         tk.Label(col, text=text, fg=TEXT_HI, bg=PANEL,
                  font=(FONT_UI, 10), wraplength=520,
                  justify=tk.LEFT, anchor="w").pack(fill=tk.X, pady=(2, 0))
+
+        # ── Probability distribution bars (top N classes) ──
+        if proba_data and len(proba_data) > 0:
+            dist_frame = tk.Frame(col, bg=PANEL)
+            dist_frame.pack(fill=tk.X, pady=(4, 0))
+
+            # Calculate max bar width
+            max_bar = 160
+
+            for cls_name, prob in proba_data:
+                bar_row = tk.Frame(dist_frame, bg=PANEL)
+                bar_row.pack(fill=tk.X, pady=1)
+
+                # Class label
+                tk.Label(bar_row, text=f"{cls_name}",
+                         fg=TEXT_DIM, bg=PANEL,
+                         font=(FONT_MONO, 6), width=20,
+                         anchor="e").pack(side=tk.LEFT)
+
+                # Bar container
+                bar_bg = tk.Frame(bar_row, bg="#151a24",
+                                  height=10, width=max_bar)
+                bar_bg.pack(side=tk.LEFT, padx=(4, 0))
+                bar_bg.pack_propagate(False)
+
+                # Filled bar
+                bar_w = max(1, int(max_bar * prob))
+                bar_color = (ACCENT3 if prob >= 0.65
+                             else ACCENT4 if prob >= 0.30
+                             else ACCENT2 if prob >= 0.10
+                             else TEXT_DIM)
+                bar_fill = tk.Frame(bar_bg, bg=bar_color,
+                                    height=10, width=bar_w)
+                bar_fill.pack(side=tk.LEFT)
+
+                # Percentage label
+                tk.Label(bar_row, text=f"{prob:.1%}",
+                         fg=TEXT_DIM, bg=PANEL,
+                         font=(FONT_MONO, 6)).pack(side=tk.LEFT, padx=(4, 0))
 
 
 # ════════════════════════════════════════════════════════════════
@@ -224,7 +294,7 @@ class AssistantGUI(tk.Tk):
         body.pack(fill=tk.BOTH, expand=True)
 
         # ── LEFT ──
-        left = tk.Frame(body, bg=BG, width=160)
+        left = tk.Frame(body, bg=BG, width=170)
         left.pack(side=tk.LEFT, fill=tk.Y); left.pack_propagate(False)
 
         self._pulse = PulseRing(left, size=120)
@@ -259,7 +329,7 @@ class AssistantGUI(tk.Tk):
         tk.Label(cf, text="COMMANDS", fg=TEXT_DIM, bg=BG,
                  font=(FONT_MONO, 7, "bold")).pack(anchor="w", pady=(0, 4))
 
-        cmd_canvas = tk.Canvas(cf, bg=BG, highlightthickness=0, width=140)
+        cmd_canvas = tk.Canvas(cf, bg=BG, highlightthickness=0, width=150)
         cmd_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         cmd_inner = tk.Frame(cmd_canvas, bg=BG)
         cmd_canvas.create_window((0, 0), window=cmd_inner, anchor="nw")
@@ -275,15 +345,34 @@ class AssistantGUI(tk.Tk):
                 "volume up/down", "mute", "screenshot",
                 "shutdown", "restart", "hello",
             ]),
-            ("WEB", [
-                "search google", "open youtube", "open gmail",
+            ("SEARCH", [
+                "search for <query>",
+                "google <query>",
+                "open browser and search for …",
+                "search youtube for <query>",
+                "open youtube and search for …",
+                "open google", "open youtube",
+                "open gmail",
             ]),
             ("FILES", [
-                "open downloads", "open desktop", "create folder",
+                "open downloads", "open desktop",
+                "create folder",
+                "open folder <name>",
+                "open my documents",
             ]),
             ("APPS", [
                 "open spotify", "open whatsapp", "open vscode",
                 "open excel", "open word", "open powerpoint",
+            ]),
+            ("SYSTEM", [
+                "what time is it",
+                "what's today's date",
+                "battery level",
+                "what's my ip",
+                "open settings",
+                "lock screen",
+                "empty recycle bin",
+                "open terminal",
             ]),
         ]
 
@@ -435,8 +524,10 @@ class AssistantGUI(tk.Tk):
             self._entry.focus_set()
 
     # ── logging ───────────────────────────────────────────────────
-    def _add_log(self, role, text, intent="", conf=0):
-        LogEntry(self._log_frame, role, text, intent, conf)
+    def _add_log(self, role, text, intent="", conf=0,
+                 proba_data=None, slot_tags=None):
+        LogEntry(self._log_frame, role, text, intent, conf,
+                 proba_data, slot_tags)
         self.after(50, lambda: self._canvas.yview_moveto(1.0))
 
     def _clear_log(self):
@@ -445,14 +536,16 @@ class AssistantGUI(tk.Tk):
         self._add_log("system", "Log cleared.", "", 0)
 
     # ── queue ─────────────────────────────────────────────────────
-    def _post(self, role, text, intent="", conf=0.0):
-        self._msg_queue.put((role, text, intent, conf))
+    def _post(self, role, text, intent="", conf=0.0,
+              proba_data=None, slot_tags=None):
+        self._msg_queue.put((role, text, intent, conf, proba_data, slot_tags))
 
     def _poll_queue(self):
         try:
             while True:
-                role, text, intent, conf = self._msg_queue.get_nowait()
-                self._add_log(role, text, intent, conf)
+                role, text, intent, conf, proba_data, slot_tags = \
+                    self._msg_queue.get_nowait()
+                self._add_log(role, text, intent, conf, proba_data, slot_tags)
                 self._statusbar.config(text=f"  {text[:90]}")
         except queue.Empty:
             pass
@@ -528,7 +621,6 @@ class AssistantGUI(tk.Tk):
                         audio = recognizer.listen(
                             src, timeout=4, phrase_time_limit=8)
                 except sr.WaitTimeoutError:
-                    # silence — loop and re-check flag
                     continue
                 except Exception as e:
                     self._post("error", f"Mic error: {e}")
@@ -585,7 +677,7 @@ class AssistantGUI(tk.Tk):
         self._post("system", "Continuous listening stopped.")
 
     # ══════════════════════════════════════════════════════════════
-    # NLP + execution
+    # NLP + slot extraction + execution
     # ══════════════════════════════════════════════════════════════
     def _process_command(self, text: str, block: bool = False):
         if self._model is None:
@@ -601,14 +693,31 @@ class AssistantGUI(tk.Tk):
             intent  = classes[idx]
             conf    = float(proba[idx])
 
+            # Build top-N probability distribution for display
+            sorted_indices = proba.argsort()[::-1][:TOP_N_CLASSES]
+            proba_data = [(classes[i], float(proba[i]))
+                          for i in sorted_indices]
+
             if conf < CONFIDENCE_THRESHOLD:
                 msg = "I'm not sure what you meant. Could you rephrase?"
-                self._post("assistant", msg, "unknown", conf)
+                self._post("assistant", msg, "unknown", conf,
+                           proba_data=proba_data)
                 speak_async(msg)
                 return
 
-            response = execute(intent)
-            self._post("assistant", response, intent, conf)
+            # Extract slots from original (raw) text
+            params = extract_slots(intent, text)
+
+            # Build slot tags for display (filter out long paths)
+            slot_tags = {}
+            for k, v in params.items():
+                if k == "path":
+                    continue  # don't show full path, show folder_name instead
+                slot_tags[k] = v
+
+            response = execute(intent, params=params)
+            self._post("assistant", response, intent, conf,
+                       proba_data=proba_data, slot_tags=slot_tags or None)
             speak_async(response)
 
         if block:

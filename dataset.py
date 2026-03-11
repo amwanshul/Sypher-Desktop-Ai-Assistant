@@ -1,11 +1,18 @@
 """
-Command Dataset for Intent Classification  v4
-~240 examples across 25 intent classes.
-Fixes:
-  - Removed 'close window' from close_app  (conflicts with open_desktop)
-  - Removed 'open folder' from open_file_explorer  (conflicts with create_folder)
-  - Removed 'open messages' from open_whatsapp  (too generic)
-  - Tightened examples so each intent has clearly distinct phrasing
+Command Dataset for Intent Classification  v5
+~400 examples across 35 intent classes.
+New in v5:
+  - search_web        : parameterised web search  ("search for cats", "google leetcode")
+  - search_youtube    : parameterised YouTube search ("youtube search cats", "search on youtube for music")
+  - get_time          : tell current time
+  - get_date          : tell current date
+  - get_battery       : show battery percentage
+  - get_ip_address    : show IP address
+  - open_settings     : open system Settings
+  - lock_screen       : lock the computer
+  - empty_recycle_bin : empty Recycle Bin / Trash
+  - open_cmd          : open terminal / command prompt
+  - open_folder_path  : open a specific named folder (Documents, Pictures …)
 """
 
 COMMAND_DATASET = [
@@ -65,7 +72,6 @@ COMMAND_DATASET = [
     ("check system performance","open_task_manager"),
 
     # ── close_app ────────────────────────────────────────────────
-    # NOTE: no 'close window' — conflicts with open_desktop
     ("close app",              "close_app"),
     ("close application",      "close_app"),
     ("close chrome",           "close_app"),
@@ -160,10 +166,32 @@ COMMAND_DATASET = [
     ("help",                   "greet"),
 
     # ══════════════════════════════════════════════════════════════
-    # Web & Search
+    # Web & Search  (parameterised — slot extractor pulls the query)
     # ══════════════════════════════════════════════════════════════
 
-    # search_google
+    # ── search_web  (browser + Google search with query) ─────────
+    ("search for python tutorials",       "search_web"),
+    ("search for leetcode",               "search_web"),
+    ("search for machine learning",       "search_web"),
+    ("google leetcode",                   "search_web"),
+    ("google python documentation",       "search_web"),
+    ("google how to cook pasta",          "search_web"),
+    ("open browser and search for leetcode",     "search_web"),
+    ("open browser and search for weather",      "search_web"),
+    ("open browser and search for recipes",      "search_web"),
+    ("search the web for javascript",     "search_web"),
+    ("look up artificial intelligence",   "search_web"),
+    ("look up how to code",              "search_web"),
+    ("search online for best laptops",    "search_web"),
+    ("web search for python",             "search_web"),
+    ("find information about mars",       "search_web"),
+    ("search for news",                   "search_web"),
+    ("browser search for openai",         "search_web"),
+    ("search for stack overflow",         "search_web"),
+    ("search for github",                 "search_web"),
+    ("search for react tutorial",         "search_web"),
+
+    # ── search_google  (just opens Google, no query) ─────────────
     ("search google",          "search_google"),
     ("google search",          "search_google"),
     ("search on google",       "search_google"),
@@ -175,7 +203,26 @@ COMMAND_DATASET = [
     ("do a google search",     "search_google"),
     ("search online",          "search_google"),
 
-    # open_youtube
+    # ── search_youtube  (YouTube search with query) ──────────────
+    ("search youtube for music",                  "search_youtube"),
+    ("search youtube for coding tutorials",       "search_youtube"),
+    ("search youtube for funny videos",           "search_youtube"),
+    ("open youtube and search for cats",          "search_youtube"),
+    ("open youtube and search for music",         "search_youtube"),
+    ("open youtube and search for python tutorial","search_youtube"),
+    ("open youtube and search for gaming",        "search_youtube"),
+    ("youtube search for recipes",                "search_youtube"),
+    ("youtube search for workout",                "search_youtube"),
+    ("search on youtube for travel vlogs",        "search_youtube"),
+    ("find on youtube how to draw",               "search_youtube"),
+    ("look up on youtube machine learning",       "search_youtube"),
+    ("play on youtube lo-fi music",               "search_youtube"),
+    ("youtube find cooking videos",               "search_youtube"),
+    ("search videos for react tutorial",          "search_youtube"),
+    ("find videos about space",                   "search_youtube"),
+    ("look for videos about fitness",             "search_youtube"),
+
+    # ── open_youtube  (just opens YouTube, no query) ─────────────
     ("open youtube",           "open_youtube"),
     ("launch youtube",         "open_youtube"),
     ("go to youtube",          "open_youtube"),
@@ -187,7 +234,7 @@ COMMAND_DATASET = [
     ("youtube",                "open_youtube"),
     ("go to youtube website",  "open_youtube"),
 
-    # open_gmail
+    # ── open_gmail ────────────────────────────────────────────────
     ("open gmail",             "open_gmail"),
     ("launch gmail",           "open_gmail"),
     ("go to gmail",            "open_gmail"),
@@ -203,7 +250,7 @@ COMMAND_DATASET = [
     # File & Folder
     # ══════════════════════════════════════════════════════════════
 
-    # open_downloads
+    # ── open_downloads ────────────────────────────────────────────
     ("open downloads",         "open_downloads"),
     ("go to downloads",        "open_downloads"),
     ("show downloads",         "open_downloads"),
@@ -214,8 +261,7 @@ COMMAND_DATASET = [
     ("where are my downloads", "open_downloads"),
     ("show downloaded files",  "open_downloads"),
 
-    # open_desktop
-    # NOTE: no 'minimize all windows' — use specific desktop navigation phrases
+    # ── open_desktop ──────────────────────────────────────────────
     ("open desktop",           "open_desktop"),
     ("go to desktop",          "open_desktop"),
     ("show desktop",           "open_desktop"),
@@ -225,8 +271,7 @@ COMMAND_DATASET = [
     ("go to home screen",      "open_desktop"),
     ("show home screen",       "open_desktop"),
 
-    # create_folder
-    # NOTE: no 'open folder' — conflicts with open_file_explorer
+    # ── create_folder ─────────────────────────────────────────────
     ("create folder",          "create_folder"),
     ("make a folder",          "create_folder"),
     ("new folder",             "create_folder"),
@@ -237,11 +282,29 @@ COMMAND_DATASET = [
     ("make directory",         "create_folder"),
     ("create a new folder",    "create_folder"),
 
+    # ── open_folder_path  (parameterised — slot extractor pulls folder name) ──
+    ("open folder documents",          "open_folder_path"),
+    ("open folder pictures",           "open_folder_path"),
+    ("open folder music",              "open_folder_path"),
+    ("open folder videos",             "open_folder_path"),
+    ("go to documents folder",         "open_folder_path"),
+    ("go to pictures folder",          "open_folder_path"),
+    ("go to my documents",             "open_folder_path"),
+    ("open my documents",              "open_folder_path"),
+    ("open my pictures",               "open_folder_path"),
+    ("open my music",                  "open_folder_path"),
+    ("open my videos",                 "open_folder_path"),
+    ("navigate to documents",          "open_folder_path"),
+    ("navigate to pictures",           "open_folder_path"),
+    ("show me my documents folder",    "open_folder_path"),
+    ("browse documents folder",        "open_folder_path"),
+    ("browse my pictures",             "open_folder_path"),
+
     # ══════════════════════════════════════════════════════════════
     # Apps
     # ══════════════════════════════════════════════════════════════
 
-    # open_spotify
+    # ── open_spotify ──────────────────────────────────────────────
     ("open spotify",           "open_spotify"),
     ("launch spotify",         "open_spotify"),
     ("start spotify",          "open_spotify"),
@@ -253,8 +316,7 @@ COMMAND_DATASET = [
     ("put on music",           "open_spotify"),
     ("open spotify app",       "open_spotify"),
 
-    # open_whatsapp
-    # NOTE: removed 'open messages' — too generic
+    # ── open_whatsapp ─────────────────────────────────────────────
     ("open whatsapp",          "open_whatsapp"),
     ("launch whatsapp",        "open_whatsapp"),
     ("start whatsapp",         "open_whatsapp"),
@@ -266,7 +328,7 @@ COMMAND_DATASET = [
     ("open chat app",          "open_whatsapp"),
     ("open whatsapp desktop",  "open_whatsapp"),
 
-    # open_vscode
+    # ── open_vscode ───────────────────────────────────────────────
     ("open vs code",           "open_vscode"),
     ("launch vs code",         "open_vscode"),
     ("start vs code",          "open_vscode"),
@@ -278,7 +340,7 @@ COMMAND_DATASET = [
     ("open my editor",         "open_vscode"),
     ("launch visual studio",   "open_vscode"),
 
-    # open_excel
+    # ── open_excel ────────────────────────────────────────────────
     ("open excel",             "open_excel"),
     ("launch excel",           "open_excel"),
     ("start excel",            "open_excel"),
@@ -288,7 +350,7 @@ COMMAND_DATASET = [
     ("open excel app",         "open_excel"),
     ("start spreadsheet",      "open_excel"),
 
-    # open_word
+    # ── open_word ─────────────────────────────────────────────────
     ("open word",              "open_word"),
     ("launch word",            "open_word"),
     ("start word",             "open_word"),
@@ -298,7 +360,7 @@ COMMAND_DATASET = [
     ("open ms word",           "open_word"),
     ("launch word document",   "open_word"),
 
-    # open_powerpoint
+    # ── open_powerpoint ───────────────────────────────────────────
     ("open powerpoint",        "open_powerpoint"),
     ("launch powerpoint",      "open_powerpoint"),
     ("start powerpoint",       "open_powerpoint"),
@@ -308,4 +370,96 @@ COMMAND_DATASET = [
     ("open slides",            "open_powerpoint"),
     ("open ms powerpoint",     "open_powerpoint"),
     ("start presentation",     "open_powerpoint"),
+
+    # ══════════════════════════════════════════════════════════════
+    # System / Internal Tasks
+    # ══════════════════════════════════════════════════════════════
+
+    # ── get_time ──────────────────────────────────────────────────
+    ("what time is it",        "get_time"),
+    ("tell me the time",       "get_time"),
+    ("current time",           "get_time"),
+    ("what is the time",       "get_time"),
+    ("check the time",         "get_time"),
+    ("time please",            "get_time"),
+    ("show me the time",       "get_time"),
+    ("what's the time",        "get_time"),
+    ("give me the time",       "get_time"),
+
+    # ── get_date ──────────────────────────────────────────────────
+    ("what is today's date",   "get_date"),
+    ("tell me the date",       "get_date"),
+    ("current date",           "get_date"),
+    ("what day is it",         "get_date"),
+    ("what date is it",        "get_date"),
+    ("today's date",           "get_date"),
+    ("show me the date",       "get_date"),
+    ("what is the date today", "get_date"),
+    ("date please",            "get_date"),
+
+    # ── get_battery ───────────────────────────────────────────────
+    ("battery level",          "get_battery"),
+    ("check battery",          "get_battery"),
+    ("how much battery",       "get_battery"),
+    ("how much charge",        "get_battery"),
+    ("battery status",         "get_battery"),
+    ("show battery",           "get_battery"),
+    ("battery percentage",     "get_battery"),
+    ("what is my battery",     "get_battery"),
+    ("check charge level",     "get_battery"),
+
+    # ── get_ip_address ────────────────────────────────────────────
+    ("what is my ip",          "get_ip_address"),
+    ("show my ip address",     "get_ip_address"),
+    ("what's my ip address",   "get_ip_address"),
+    ("get my ip",              "get_ip_address"),
+    ("check my ip",            "get_ip_address"),
+    ("ip address",             "get_ip_address"),
+    ("show ip",                "get_ip_address"),
+    ("my ip address",          "get_ip_address"),
+    ("tell me my ip",          "get_ip_address"),
+
+    # ── open_settings ─────────────────────────────────────────────
+    ("open settings",          "open_settings"),
+    ("launch settings",        "open_settings"),
+    ("system settings",        "open_settings"),
+    ("open system preferences","open_settings"),
+    ("go to settings",         "open_settings"),
+    ("windows settings",       "open_settings"),
+    ("open control panel",     "open_settings"),
+    ("show settings",          "open_settings"),
+    ("open preferences",       "open_settings"),
+
+    # ── lock_screen ───────────────────────────────────────────────
+    ("lock screen",            "lock_screen"),
+    ("lock my computer",       "lock_screen"),
+    ("lock the pc",            "lock_screen"),
+    ("lock my pc",             "lock_screen"),
+    ("lock workstation",       "lock_screen"),
+    ("lock this computer",     "lock_screen"),
+    ("lock my screen",         "lock_screen"),
+    ("lock the screen",        "lock_screen"),
+
+    # ── empty_recycle_bin ─────────────────────────────────────────
+    ("empty recycle bin",      "empty_recycle_bin"),
+    ("clear recycle bin",      "empty_recycle_bin"),
+    ("empty trash",            "empty_recycle_bin"),
+    ("clear trash",            "empty_recycle_bin"),
+    ("delete recycle bin",     "empty_recycle_bin"),
+    ("clean recycle bin",      "empty_recycle_bin"),
+    ("empty the trash",        "empty_recycle_bin"),
+    ("clean up recycle bin",   "empty_recycle_bin"),
+
+    # ── open_cmd ──────────────────────────────────────────────────
+    ("open command prompt",    "open_cmd"),
+    ("open terminal",          "open_cmd"),
+    ("launch command prompt",  "open_cmd"),
+    ("launch terminal",        "open_cmd"),
+    ("start command prompt",   "open_cmd"),
+    ("start terminal",         "open_cmd"),
+    ("open cmd",               "open_cmd"),
+    ("open powershell",        "open_cmd"),
+    ("launch powershell",      "open_cmd"),
+    ("open console",           "open_cmd"),
+    ("open shell",             "open_cmd"),
 ]

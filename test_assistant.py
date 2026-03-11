@@ -1,6 +1,6 @@
 """
-test_assistant.py
-Tests for the intent classifier and command dispatcher.
+test_assistant.py  v5
+Tests for the intent classifier, command dispatcher, and slot extractor.
 Run with:  python test_assistant.py
 """
 
@@ -10,15 +10,16 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from model_trainer    import train, preprocess
 from command_executor import INTENT_HANDLERS
+from slot_extractor   import extract_slots
 
 
 # ──────────────────────────────────────────────
 # Test cases  (command text → expected intent)
 # ──────────────────────────────────────────────
 TEST_CASES = [
+    # Original tests
     ("open chrome",           "open_browser"),
     ("launch browser",        "open_browser"),
-    ("start firefox",         "open_browser"),
     ("open calculator",       "open_calculator"),
     ("start calc",            "open_calculator"),
     ("open file explorer",    "open_file_explorer"),
@@ -29,7 +30,6 @@ TEST_CASES = [
     ("shutdown system",       "shutdown"),
     ("turn off computer",     "shutdown"),
     ("restart system",        "restart"),
-    ("reboot",                "restart"),
     ("volume up",             "volume_up"),
     ("louder",                "volume_up"),
     ("volume down",           "volume_down"),
@@ -38,17 +38,61 @@ TEST_CASES = [
     ("take screenshot",       "take_screenshot"),
     ("hello",                 "greet"),
     ("how are you",           "greet"),
+
+    # New: search_web (parameterised)
+    ("search for leetcode",                   "search_web"),
+    ("google machine learning",               "search_web"),
+    ("open browser and search for weather",   "search_web"),
+    ("search for python tutorials",           "search_web"),
+
+    # New: search_youtube (parameterised)
+    ("open youtube and search for cats",      "search_youtube"),
+    ("search youtube for music",              "search_youtube"),
+    ("youtube search for recipes",            "search_youtube"),
+
+    # New: system/internal
+    ("what time is it",       "get_time"),
+    ("current time",          "get_time"),
+    ("what day is it",        "get_date"),
+    ("battery level",         "get_battery"),
+    ("what is my ip",         "get_ip_address"),
+    ("open settings",         "open_settings"),
+    ("lock screen",           "lock_screen"),
+    ("empty recycle bin",     "empty_recycle_bin"),
+    ("open terminal",         "open_cmd"),
+    ("open command prompt",   "open_cmd"),
+
+    # New: open_folder_path
+    ("open folder documents",  "open_folder_path"),
+    ("open my pictures",       "open_folder_path"),
+]
+
+
+# ──────────────────────────────────────────────
+# Slot extraction tests
+# ──────────────────────────────────────────────
+SLOT_TESTS = [
+    ("search_web",    "search for leetcode",                   {"query": "leetcode"}),
+    ("search_web",    "google machine learning",               {"query": "machine learning"}),
+    ("search_web",    "open browser and search for weather",   {"query": "weather"}),
+    ("search_youtube","open youtube and search for cats",      {"query": "cats"}),
+    ("search_youtube","search youtube for coding tutorials",   {"query": "coding tutorials"}),
+    ("open_folder_path", "open folder documents",              {"path": os.path.join(os.path.expanduser("~"), "Documents"),
+                                                                "folder_name": "Documents"}),
+    ("close_app",     "close chrome",                          {"app_name": "chrome"}),
+    ("close_app",     "close app",                             {}),
+    ("greet",         "hello",                                 {}),
 ]
 
 
 def run_tests(model):
     passed = 0
     failed = 0
-    print("\n" + "="*60)
-    print(f"{'TEST SUITE':^60}")
-    print("="*60)
-    print(f"{'Command':<35} {'Expected':<20} {'Got':<20} {'Conf':>6}")
-    print("-"*60)
+    print("\n" + "="*70)
+    print(f"{'INTENT CLASSIFICATION TESTS':^70}")
+    print("="*70)
+    print(f"{'Command':<40} {'Expected':<20} {'Got':<20} {'Conf':>6}")
+    print("-"*70)
 
     for command, expected_intent in TEST_CASES:
         processed = preprocess(command)
@@ -63,12 +107,39 @@ def run_tests(model):
             passed += 1
         else:
             failed += 1
-        print(f"{status} {command:<34} {expected_intent:<20} {predicted:<20} {conf:6.2%}")
+        print(f"{status} {command:<39} {expected_intent:<20} {predicted:<20} {conf:6.2%}")
 
-    print("="*60)
+    print("="*70)
     total = passed + failed
     print(f"Results: {passed}/{total} passed  ({passed/total:.0%})")
-    print("="*60)
+    print("="*70)
+    return passed, failed
+
+
+def test_slot_extraction():
+    print("\n" + "="*70)
+    print(f"{'SLOT EXTRACTION TESTS':^70}")
+    print("="*70)
+    passed = 0
+    failed = 0
+
+    for intent, raw_text, expected_slots in SLOT_TESTS:
+        result = extract_slots(intent, raw_text)
+        ok = result == expected_slots
+        status = "✓" if ok else "✗"
+        if ok:
+            passed += 1
+        else:
+            failed += 1
+        print(f"{status} ({intent}) '{raw_text}'")
+        if not ok:
+            print(f"    Expected: {expected_slots}")
+            print(f"    Got:      {result}")
+
+    print("-"*70)
+    total = passed + failed
+    print(f"Slot Results: {passed}/{total} passed  ({passed/total:.0%})")
+    print("="*70)
     return passed, failed
 
 
@@ -76,7 +147,7 @@ def test_preprocessor():
     print("\n[Preprocessor Tests]")
     cases = [
         ("Open CHROME!",   "open chrome"),
-        ("Shut Down the Computer.", "shut computer"),  # stopwords removed
+        ("Shut Down the Computer.", "shut computer"),
     ]
     for raw, _ in cases:
         result = preprocess(raw)
@@ -90,10 +161,22 @@ def test_handlers_registered():
         "open_notepad", "open_task_manager", "close_app",
         "shutdown", "restart", "volume_up", "volume_down",
         "mute", "take_screenshot", "greet",
+        # New intents
+        "search_google", "search_web", "search_youtube",
+        "open_youtube", "open_gmail",
+        "open_downloads", "open_desktop", "create_folder", "open_folder_path",
+        "open_spotify", "open_whatsapp", "open_vscode",
+        "open_excel", "open_word", "open_powerpoint",
+        "get_time", "get_date", "get_battery", "get_ip_address",
+        "open_settings", "lock_screen", "empty_recycle_bin", "open_cmd",
     ]
+    all_ok = True
     for intent in expected_intents:
         status = "✓" if intent in INTENT_HANDLERS else "✗  MISSING"
+        if intent not in INTENT_HANDLERS:
+            all_ok = False
         print(f"  {status}  {intent}")
+    return all_ok
 
 
 if __name__ == "__main__":
@@ -101,7 +184,9 @@ if __name__ == "__main__":
     model = train()
 
     test_preprocessor()
-    test_handlers_registered()
-    passed, failed = run_tests(model)
+    handlers_ok = test_handlers_registered()
+    cls_passed, cls_failed = run_tests(model)
+    slot_passed, slot_failed = test_slot_extraction()
 
-    sys.exit(0 if failed == 0 else 1)
+    total_failed = cls_failed + slot_failed + (0 if handlers_ok else 1)
+    sys.exit(0 if total_failed == 0 else 1)

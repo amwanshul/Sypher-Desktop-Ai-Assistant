@@ -1,13 +1,19 @@
 """
-command_executor.py  v4
+command_executor.py  v5
 All commands audited and fixed for Windows.
-- open_browser     : opens default browser (not hardcoded to Chrome)
-- close_app        : smart — detects what's running, closes the top app
-- open_desktop     : fixed broken PowerShell escape — uses simple explorer path
-- open_downloads   : creates folder if it doesn't exist
-- open_whatsapp    : added Microsoft Store (WindowsApps) path
-- open_vscode      : added PROGRAMFILES(X86) and PATH fallback
-- open_excel/word/ppt : added Office 365 Click-to-Run registry lookup
+New in v5:
+- search_web        : parameterised Google search (opens browser with query)
+- search_youtube    : parameterised YouTube search (opens browser with query)
+- get_time          : returns current time string
+- get_date          : returns current date string
+- get_battery       : returns battery percentage
+- get_ip_address    : returns local IP address
+- open_settings     : opens Windows Settings
+- lock_screen       : locks the workstation
+- empty_recycle_bin : empties the Recycle Bin
+- open_cmd          : opens Command Prompt / terminal
+- open_folder_path  : opens a specific named folder
+- execute() now accepts optional params dict for slot-filled intents
 """
 
 import os
@@ -15,6 +21,8 @@ import platform
 import subprocess
 import datetime
 import time
+import socket
+from urllib.parse import quote_plus
 
 OS = platform.system()   # "Windows" | "Darwin" | "Linux"
 
@@ -73,7 +81,6 @@ def _win_find_office_exe(exe_name: str) -> str | None:
     Works for Office 2013 / 2016 / 2019 / 365 (Click-to-Run).
     Returns full path to exe or None.
     """
-    # Registry keys tried in order
     reg_paths = [
         r"SOFTWARE\Microsoft\Office\ClickToRun\Configuration",
         r"SOFTWARE\WOW6432Node\Microsoft\Office\ClickToRun\Configuration",
@@ -94,7 +101,6 @@ def _win_find_office_exe(exe_name: str) -> str | None:
     except ImportError:
         pass
 
-    # Fallback: hardcoded common paths (Office 2013–2021)
     roots = [
         r"C:\Program Files\Microsoft Office\root\Office16",
         r"C:\Program Files (x86)\Microsoft Office\root\Office16",
@@ -114,14 +120,12 @@ def _win_open_office(exe_name: str, fallback_cmd: str) -> bool:
     path = _win_find_office_exe(exe_name)
     if path:
         return _launch(path)
-    # Last resort: shell association (works if Office registered in PATH/shell)
     os.system(f"start {fallback_cmd}")
     return True
 
 
 # ─────────────────────────────────────────────────────────────
-# Windows volume / mute  (WScript SendKeys — zero dependencies)
-# VK codes:  173 = mute toggle   174 = vol down   175 = vol up
+# Windows volume / mute
 # ─────────────────────────────────────────────────────────────
 def _win_send_vk(code: int):
     os.system(
@@ -132,13 +136,13 @@ def _win_send_vk(code: int):
 
 
 def _win_volume_up():
-    for _ in range(5):        # 5 presses ≈ +10%
+    for _ in range(5):
         _win_send_vk(175)
         time.sleep(0.04)
 
 
 def _win_volume_down():
-    for _ in range(5):        # 5 presses ≈ -10%
+    for _ in range(5):
         _win_send_vk(174)
         time.sleep(0.04)
 
@@ -149,9 +153,6 @@ def _win_mute():
 
 # ─────────────────────────────────────────────────────────────
 # Windows screenshot
-# Method 1: PowerShell System.Windows.Forms  (always available)
-# Method 2: Pillow ImageGrab
-# Method 3: pyautogui
 # ─────────────────────────────────────────────────────────────
 def _win_screenshot(filepath: str) -> bool:
     ps_path = filepath.replace("\\", "/")
@@ -206,17 +207,14 @@ def _win_screenshot(filepath: str) -> bool:
 
 # ─────────────────────────────────────────────────────────────
 # Windows close_app — smart process detection
-# Checks what is actually running, closes the highest-priority app
 # ─────────────────────────────────────────────────────────────
-
-# Ordered by how commonly apps are open — topmost gets closed first
 _WIN_CLOSE_PRIORITY = [
     "chrome.exe",
     "firefox.exe",
     "msedge.exe",
     "notepad.exe",
     "notepad++.exe",
-    "Code.exe",             # VS Code
+    "Code.exe",
     "EXCEL.EXE",
     "WINWORD.EXE",
     "POWERPNT.EXE",
@@ -229,12 +227,35 @@ _WIN_CLOSE_PRIORITY = [
     "vlc.exe",
     "mspaint.exe",
     "calculator.exe",
-    "ApplicationFrameHost.exe",  # UWP Calculator on Win10/11
+    "ApplicationFrameHost.exe",
 ]
+
+# Map user-friendly app names to process names
+_APP_NAME_MAP = {
+    "chrome":      "chrome.exe",
+    "firefox":     "firefox.exe",
+    "edge":        "msedge.exe",
+    "browser":     "msedge.exe",
+    "notepad":     "notepad.exe",
+    "vs code":     "Code.exe",
+    "vscode":      "Code.exe",
+    "code":        "Code.exe",
+    "excel":       "EXCEL.EXE",
+    "word":        "WINWORD.EXE",
+    "powerpoint":  "POWERPNT.EXE",
+    "spotify":     "Spotify.exe",
+    "whatsapp":    "WhatsApp.exe",
+    "telegram":    "Telegram.exe",
+    "discord":     "Discord.exe",
+    "zoom":        "Zoom.exe",
+    "teams":       "Teams.exe",
+    "vlc":         "vlc.exe",
+    "paint":       "mspaint.exe",
+    "calculator":  "calculator.exe",
+}
 
 
 def _get_running_procs_windows() -> set:
-    """Return lowercase set of running process names."""
     try:
         result = subprocess.run(
             ["tasklist", "/FO", "CSV", "/NH"],
@@ -250,7 +271,16 @@ def _get_running_procs_windows() -> set:
         return set()
 
 
-def _close_app_windows() -> bool:
+def _close_app_windows(params: dict = None) -> bool:
+    # If a specific app was named, try that first
+    if params and params.get("app_name"):
+        app = params["app_name"].lower()
+        exe = _APP_NAME_MAP.get(app)
+        if exe:
+            os.system(f'taskkill /F /IM "{exe}"')
+            print(f"[Executor] Closed {exe}")
+            return True
+    # Fallback: close the highest-priority running app
     running = _get_running_procs_windows()
     for exe in _WIN_CLOSE_PRIORITY:
         if exe.lower() in running:
@@ -265,14 +295,11 @@ def _close_app_windows() -> bool:
 # COMMAND HANDLERS
 # ═════════════════════════════════════════════════════════════
 
-def open_browser():
-    """Open the system default browser."""
-    # Use a URL so Windows opens whatever the user's DEFAULT browser is
-    # (not hardcoded to Chrome which may not be installed)
+def open_browser(**kw):
     return _open_url("https://www.google.com")
 
 
-def open_calculator():
+def open_calculator(**kw):
     if OS == "Windows":
         os.system("calc")
     elif OS == "Darwin":
@@ -282,7 +309,7 @@ def open_calculator():
     return True
 
 
-def open_file_explorer():
+def open_file_explorer(**kw):
     if OS == "Windows":
         os.system("explorer")
     elif OS == "Darwin":
@@ -292,7 +319,7 @@ def open_file_explorer():
     return True
 
 
-def open_notepad():
+def open_notepad(**kw):
     if OS == "Windows":
         os.system("notepad")
     elif OS == "Darwin":
@@ -307,7 +334,7 @@ def open_notepad():
     return True
 
 
-def open_task_manager():
+def open_task_manager(**kw):
     if OS == "Windows":
         os.system("taskmgr")
     elif OS == "Darwin":
@@ -322,15 +349,9 @@ def open_task_manager():
     return True
 
 
-def close_app():
-    """
-    Closes the most relevant currently-open application.
-    Windows: checks running processes against priority list.
-    macOS: closes the frontmost window via AppleScript.
-    Linux: closes the focused window via xdotool.
-    """
+def close_app(params=None, **kw):
     if OS == "Windows":
-        return _close_app_windows()
+        return _close_app_windows(params)
     elif OS == "Darwin":
         try:
             script = (
@@ -352,7 +373,7 @@ def close_app():
             return True
 
 
-def shutdown():
+def shutdown(**kw):
     if OS == "Windows":
         os.system("shutdown /s /t 5")
     else:
@@ -360,7 +381,7 @@ def shutdown():
     return True
 
 
-def restart():
+def restart(**kw):
     if OS == "Windows":
         os.system("shutdown /r /t 5")
     elif OS == "Darwin":
@@ -370,7 +391,7 @@ def restart():
     return True
 
 
-def volume_up():
+def volume_up(**kw):
     if OS == "Windows":
         _win_volume_up()
     elif OS == "Darwin":
@@ -381,7 +402,7 @@ def volume_up():
     return True
 
 
-def volume_down():
+def volume_down(**kw):
     if OS == "Windows":
         _win_volume_down()
     elif OS == "Darwin":
@@ -392,7 +413,7 @@ def volume_down():
     return True
 
 
-def mute():
+def mute(**kw):
     if OS == "Windows":
         _win_mute()
     elif OS == "Darwin":
@@ -402,7 +423,7 @@ def mute():
     return True
 
 
-def take_screenshot():
+def take_screenshot(**kw):
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     filepath  = os.path.join(os.path.expanduser("~"), f"screenshot_{timestamp}.png")
     if OS == "Windows":
@@ -423,39 +444,59 @@ def take_screenshot():
                 return False
 
 
-def greet():
+def greet(**kw):
     return True
 
 
-# ── Web & Search ──────────────────────────────────────────────
+# ── Web & Search (parameterised) ─────────────────────────────
 
-def search_google():
+def search_google(**kw):
     return _open_url("https://www.google.com")
 
 
-def open_youtube():
+def search_web(params=None, **kw):
+    """Open Google search with an extracted query."""
+    query = (params or {}).get("query", "")
+    if query:
+        url = f"https://www.google.com/search?q={quote_plus(query)}"
+        _open_url(url)
+        return True
+    # Fallback: just open Google
+    return _open_url("https://www.google.com")
+
+
+def search_youtube(params=None, **kw):
+    """Open YouTube search with an extracted query."""
+    query = (params or {}).get("query", "")
+    if query:
+        url = f"https://www.youtube.com/results?search_query={quote_plus(query)}"
+        _open_url(url)
+        return True
+    # Fallback: just open YouTube
     return _open_url("https://www.youtube.com")
 
 
-def open_gmail():
+def open_youtube(**kw):
+    return _open_url("https://www.youtube.com")
+
+
+def open_gmail(**kw):
     return _open_url("https://mail.google.com")
 
 
 # ── File & Folder ─────────────────────────────────────────────
 
-def open_downloads():
+def open_downloads(**kw):
     path = os.path.join(os.path.expanduser("~"), "Downloads")
     return _open_folder(path)
 
 
-def open_desktop():
-    """Opens the Desktop folder in a file manager window."""
+def open_desktop(**kw):
     path = os.path.join(os.path.expanduser("~"), "Desktop")
     return _open_folder(path)
 
 
-def create_folder():
-    """Creates a new timestamped folder on the Desktop and opens it."""
+def create_folder(**kw):
     timestamp   = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     desktop     = os.path.join(os.path.expanduser("~"), "Desktop")
     new_folder  = os.path.join(desktop, f"New_Folder_{timestamp}")
@@ -468,9 +509,27 @@ def create_folder():
         return False
 
 
+def open_folder_path(params=None, **kw):
+    """Open a specific folder by extracted path."""
+    path = (params or {}).get("path", "")
+    folder_name = (params or {}).get("folder_name", "")
+    if path and os.path.isdir(path):
+        _open_folder(path)
+        return True
+    if folder_name:
+        # Try constructing path
+        path = os.path.join(os.path.expanduser("~"), folder_name)
+        if os.path.isdir(path):
+            _open_folder(path)
+            return True
+    # Fallback: open home
+    _open_folder(os.path.expanduser("~"))
+    return True
+
+
 # ── Apps ──────────────────────────────────────────────────────
 
-def open_spotify():
+def open_spotify(**kw):
     if OS == "Windows":
         paths = [
             os.path.join(os.environ.get("APPDATA", ""),
@@ -492,16 +551,13 @@ def open_spotify():
     return True
 
 
-def open_whatsapp():
+def open_whatsapp(**kw):
     if OS == "Windows":
         paths = [
-            # Classic desktop installer
             os.path.join(os.environ.get("LOCALAPPDATA", ""),
                          "WhatsApp", "WhatsApp.exe"),
-            # Microsoft Store version (WindowsApps)
             os.path.join(os.environ.get("LOCALAPPDATA", ""),
                          "Microsoft", "WindowsApps", "WhatsApp.exe"),
-            # Older Microsoft Store path
             os.path.join(os.environ.get("PROGRAMFILES", ""),
                          "WindowsApps", "WhatsApp.exe"),
         ]
@@ -519,7 +575,7 @@ def open_whatsapp():
     return True
 
 
-def open_vscode():
+def open_vscode(**kw):
     if OS == "Windows":
         paths = [
             os.path.join(os.environ.get("LOCALAPPDATA", ""),
@@ -533,7 +589,6 @@ def open_vscode():
         for p in paths:
             if os.path.exists(p):
                 return _launch(p)
-        # Fallback: 'code' command (works if VS Code added to PATH)
         try:
             subprocess.Popen(["code"])
             return True
@@ -550,7 +605,7 @@ def open_vscode():
     return True
 
 
-def open_excel():
+def open_excel(**kw):
     if OS == "Windows":
         return _win_open_office("EXCEL.EXE", "excel")
     elif OS == "Darwin":
@@ -560,7 +615,7 @@ def open_excel():
     return True
 
 
-def open_word():
+def open_word(**kw):
     if OS == "Windows":
         return _win_open_office("WINWORD.EXE", "winword")
     elif OS == "Darwin":
@@ -570,7 +625,7 @@ def open_word():
     return True
 
 
-def open_powerpoint():
+def open_powerpoint(**kw):
     if OS == "Windows":
         return _win_open_office("POWERPNT.EXE", "powerpnt")
     elif OS == "Darwin":
@@ -578,6 +633,167 @@ def open_powerpoint():
     else:
         subprocess.Popen(["libreoffice", "--impress"])
     return True
+
+
+# ═════════════════════════════════════════════════════════════
+# NEW: System / Internal-task handlers
+# ═════════════════════════════════════════════════════════════
+
+def get_time(**kw):
+    """Return the current time as a readable string (no side-effects)."""
+    return True   # response is dynamic, see INTENT_HANDLERS
+
+
+def get_date(**kw):
+    return True
+
+
+def get_battery(**kw):
+    return True
+
+
+def get_ip_address(**kw):
+    return True
+
+
+def open_settings(**kw):
+    if OS == "Windows":
+        os.system("start ms-settings:")
+    elif OS == "Darwin":
+        subprocess.Popen(["open", "-a", "System Preferences"])
+    else:
+        for app in ["gnome-control-center", "xfce4-settings-manager"]:
+            try:
+                subprocess.Popen([app])
+                return True
+            except FileNotFoundError:
+                continue
+    return True
+
+
+def lock_screen(**kw):
+    if OS == "Windows":
+        os.system("rundll32.exe user32.dll,LockWorkStation")
+    elif OS == "Darwin":
+        subprocess.call(["/System/Library/CoreServices/Menu Extras"
+                         "/User.menu/Contents/Resources/CGSession", "-suspend"])
+    else:
+        try:
+            subprocess.call(["xdg-screensaver", "lock"])
+        except FileNotFoundError:
+            subprocess.call(["gnome-screensaver-command", "-l"])
+    return True
+
+
+def empty_recycle_bin(**kw):
+    if OS == "Windows":
+        try:
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "Clear-RecycleBin -Force -ErrorAction SilentlyContinue"],
+                capture_output=True, timeout=15
+            )
+        except Exception as e:
+            print(f"[Executor] empty_recycle_bin error: {e}")
+            return False
+    elif OS == "Darwin":
+        subprocess.call(["osascript", "-e",
+            'tell application "Finder" to empty the trash'])
+    else:
+        import shutil
+        trash = os.path.expanduser("~/.local/share/Trash")
+        if os.path.exists(trash):
+            shutil.rmtree(trash, ignore_errors=True)
+    return True
+
+
+def open_cmd(**kw):
+    if OS == "Windows":
+        os.system("start cmd")
+    elif OS == "Darwin":
+        subprocess.Popen(["open", "-a", "Terminal"])
+    else:
+        for term in ["gnome-terminal", "xfce4-terminal", "konsole", "xterm"]:
+            try:
+                subprocess.Popen([term])
+                return True
+            except FileNotFoundError:
+                continue
+    return True
+
+
+# ═════════════════════════════════════════════════════════════
+# Dynamic response builders (for intents returning info)
+# ═════════════════════════════════════════════════════════════
+
+def _build_dynamic_response(intent: str, params: dict) -> str | None:
+    """Build a text response for informational intents."""
+    if intent == "get_time":
+        now = datetime.datetime.now().strftime("%I:%M %p")
+        return f"The current time is {now}."
+
+    if intent == "get_date":
+        today = datetime.datetime.now().strftime("%A, %B %d, %Y")
+        return f"Today is {today}."
+
+    if intent == "get_battery":
+        try:
+            import psutil
+            battery = psutil.sensors_battery()
+            if battery:
+                pct = battery.percent
+                plug = "plugged in" if battery.power_plugged else "on battery"
+                return f"Battery is at {pct:.0f}% ({plug})."
+            return "Could not read battery info."
+        except ImportError:
+            # Fallback: PowerShell
+            if OS == "Windows":
+                try:
+                    r = subprocess.run(
+                        ["powershell", "-NoProfile", "-Command",
+                         "(Get-WmiObject Win32_Battery).EstimatedChargeRemaining"],
+                        capture_output=True, text=True, timeout=10
+                    )
+                    pct = r.stdout.strip()
+                    if pct.isdigit():
+                        return f"Battery is at {pct}%."
+                except Exception:
+                    pass
+            return "Could not read battery (install psutil for best results)."
+
+    if intent == "get_ip_address":
+        try:
+            hostname = socket.gethostname()
+            ip = socket.gethostbyname(hostname)
+            return f"Your local IP address is {ip}."
+        except Exception:
+            return "Could not determine your IP address."
+
+    if intent == "search_web":
+        query = (params or {}).get("query", "")
+        if query:
+            return f"Searching the web for '{query}'."
+        return "Opening Google."
+
+    if intent == "search_youtube":
+        query = (params or {}).get("query", "")
+        if query:
+            return f"Searching YouTube for '{query}'."
+        return "Opening YouTube."
+
+    if intent == "open_folder_path":
+        folder = (params or {}).get("folder_name", "")
+        if folder:
+            return f"Opening your {folder} folder."
+        return "Opening your home folder."
+
+    if intent == "close_app":
+        app = (params or {}).get("app_name", "")
+        if app:
+            return f"Closing {app}."
+        return "Closing the active application."
+
+    return None
 
 
 # ═════════════════════════════════════════════════════════════
@@ -596,17 +812,23 @@ INTENT_HANDLERS = {
     "restart":            (restart,            "Restarting in 5 seconds."),
     "volume_up":          (volume_up,          "Increasing the volume."),
     "volume_down":        (volume_down,        "Decreasing the volume."),
-    "mute":               (mute,               "Toggling mute."),
+    "mute":               (mute,              "Toggling mute."),
     "take_screenshot":    (take_screenshot,    "Taking a screenshot."),
-    "greet":              (greet,              "Hello! I am your voice assistant. Say a command or ask what I can do."),
+    "greet":              (greet,              "Hello! I'm your voice assistant. "
+                                               "I can open apps, search the web, "
+                                               "tell you the time, check your battery, "
+                                               "and much more. Just ask!"),
     # Web & Search
     "search_google":      (search_google,      "Opening Google."),
+    "search_web":         (search_web,         "Searching the web."),
+    "search_youtube":     (search_youtube,     "Searching YouTube."),
     "open_youtube":       (open_youtube,       "Opening YouTube."),
     "open_gmail":         (open_gmail,         "Opening Gmail."),
     # File & Folder
     "open_downloads":     (open_downloads,     "Opening your Downloads folder."),
     "open_desktop":       (open_desktop,       "Opening Desktop."),
     "create_folder":      (create_folder,      "Creating a new folder on your Desktop."),
+    "open_folder_path":   (open_folder_path,   "Opening folder."),
     # Apps
     "open_spotify":       (open_spotify,       "Opening Spotify."),
     "open_whatsapp":      (open_whatsapp,      "Opening WhatsApp."),
@@ -614,12 +836,53 @@ INTENT_HANDLERS = {
     "open_excel":         (open_excel,         "Opening Microsoft Excel."),
     "open_word":          (open_word,          "Opening Microsoft Word."),
     "open_powerpoint":    (open_powerpoint,    "Opening Microsoft PowerPoint."),
+    # System / Internal
+    "get_time":           (get_time,           "Checking the time."),
+    "get_date":           (get_date,           "Checking the date."),
+    "get_battery":        (get_battery,        "Checking battery status."),
+    "get_ip_address":     (get_ip_address,     "Checking your IP address."),
+    "open_settings":      (open_settings,      "Opening Settings."),
+    "lock_screen":        (lock_screen,        "Locking the screen."),
+    "empty_recycle_bin":   (empty_recycle_bin,  "Emptying the Recycle Bin."),
+    "open_cmd":           (open_cmd,           "Opening Command Prompt."),
 }
 
 
-def execute(intent: str) -> str:
-    if intent in INTENT_HANDLERS:
-        handler, response = INTENT_HANDLERS[intent]
+# Intents that accept params from slot extraction
+_PARAMETERISED_INTENTS = {
+    "search_web", "search_youtube", "open_folder_path", "close_app",
+}
+
+# Intents that produce dynamic text responses
+_DYNAMIC_INTENTS = {
+    "get_time", "get_date", "get_battery", "get_ip_address",
+    "search_web", "search_youtube", "open_folder_path", "close_app",
+}
+
+
+def execute(intent: str, params: dict = None) -> str:
+    """
+    Dispatch an intent to its handler and return a response string.
+    Supports parameterised intents via the optional `params` dict.
+    """
+    if intent not in INTENT_HANDLERS:
+        return f"I don't know how to handle '{intent}' yet."
+
+    handler, default_response = INTENT_HANDLERS[intent]
+
+    # Call handler (pass params if it's a parameterised intent)
+    if intent in _PARAMETERISED_INTENTS:
+        success = handler(params=params)
+    else:
         success = handler()
-        return response if success else f"Sorry, I could not complete '{intent}'."
-    return f"I don't know how to handle '{intent}' yet."
+
+    if not success:
+        return f"Sorry, I could not complete '{intent}'."
+
+    # Use dynamic response if available
+    if intent in _DYNAMIC_INTENTS:
+        dynamic = _build_dynamic_response(intent, params)
+        if dynamic:
+            return dynamic
+
+    return default_response
